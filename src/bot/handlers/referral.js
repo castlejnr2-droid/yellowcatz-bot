@@ -1,15 +1,14 @@
 const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
-
 require('dotenv').config();
 
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YellowCatzBot';
 
 async function showReferralMenu(bot, chatId, telegramId, msgId) {
-  const user = db.getUser(telegramId);
+  const user = await db.getUser(telegramId);
   if (!user) return;
 
-  const stats = db.getReferralStats(telegramId);
+  const stats = await db.getReferralStats(telegramId);
   const refLink = `https://t.me/${BOT_USERNAME}?start=${user.referral_code}`;
 
   const text =
@@ -22,7 +21,7 @@ async function showReferralMenu(bot, chatId, telegramId, msgId) {
     `━━━━━━━━━━━━━━━━━\n\n` +
     `🔗 *Your Referral Link:*\n` +
     `\`${refLink}\`\n\n` +
-    `_Share this link with friends. When they join and collect for the first time, you earn the bonus!_ 🐾`;
+    `_Share this link with friends!_ 🐾`;
 
   const opts = {
     reply_markup: {

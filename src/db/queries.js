@@ -1,326 +1,355 @@
-const { getDb, getDbAsync } = require('./index');
-const { v4: uuidv4 } = require('uuid');
+const { pool, query } = require('./index');
 
 // ─── USERS ───────────────────────────────────────────────────────────────────
 
-function getUser(telegramId) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
+async function getUser(telegramId) {
+  const res = await query('SELECT * FROM users WHERE telegram_id = $1', [String(telegramId)]);
+  return res.rows[0] || null;
 }
 
-function createUser({ telegramId, username, firstName, referredBy }) {
-  const db = getDb();
+async function createUser({ telegramId, username, firstName, referredBy }) {
   const referralCode = 'ref_' + telegramId;
-  db.prepare(`
-    INSERT OR IGNORE INTO users (telegram_id, username, first_name, referral_code, referred_by)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(String(telegramId), username || null, firstName || null, referralCode, referredBy || null);
+  await query(`
+    INSERT INTO users (telegram_id, username, first_name, referral_code, referred_by)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (telegram_id) DO NOTHING
+  `, [String(telegramId), username || null, firstName || null, referralCode, referredBy || null]);
   return getUser(telegramId);
 }
 
-function getOrCreateUser({ telegramId, username, firstName, referredBy }) {
-  let user = getUser(telegramId);
+async function getOrCreateUser({ telegramId, username, firstName, referredBy }) {
+  let user = await getUser(telegramId);
   if (!user) {
-    user = createUser({ telegramId, username, firstName, referredBy });
+    user = await createUser({ telegramId, username, firstName, referredBy });
   }
   return user;
 }
 
-function updateUserBalances(telegramId, gambleDelta, spotDelta) {
-  const db = getDb();
-  db.prepare(`
+async function updateUserBalances(telegramId, gambleDelta, spotDelta) {
+  await query(`
     UPDATE users 
-    SET gamble_balance = gamble_balance + ?,
-        spot_balance = spot_balance + ?,
-        updated_at = datetime('now')
-    WHERE telegram_id = ?
-  `).run(gambleDelta, spotDelta, String(telegramId));
+    SET gamble_balance = gamble_balance + $1,
+        spot_balance = spot_balance + $2,
+        updated_at = NOW()
+    WHERE telegram_id = $3
+  `, [gambleDelta, spotDelta, String(telegramId)]);
 }
 
-function setLastCollect(telegramId) {
-  const db = getDb();
-  db.prepare(`UPDATE users SET last_collect_at = datetime('now') WHERE telegram_id = ?`).run(String(telegramId));
+async function setLastCollect(telegramId) {
+  await query('UPDATE users SET last_collect_at = NOW() WHERE telegram_id = $1', [String(telegramId)]);
 }
 
-function getAllUsers() {
-  const db = getDb();
-  return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all();
+async function getAllUsers() {
+  const res = await query('SELECT * FROM users ORDER BY created_at DESC');
+  return res.rows;
 }
 
-function getTotalUserCount() {
-  const db = getDb();
-  return db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+async function getTotalUserCount() {
+  const res = await query('SELECT COUNT(*) as count FROM users');
+  return parseInt(res.rows[0].count);
 }
 
 // ─── COLLECTIONS ─────────────────────────────────────────────────────────────
 
-function recordCollection(telegramId, amount) {
-  const db = getDb();
-  db.prepare('INSERT INTO collections (user_id, amount) VALUES (?, ?)').run(String(telegramId), amount);
-  updateUserBalances(telegramId, amount, 0);
-  setLastCollect(telegramId);
+async function recordCollection(telegramId, amount) {
+  await query('INSERT INTO collections (user_id, amount) VALUES ($1, $2)', [String(telegramId), amount]);
+  await updateUserBalances(telegramId, amount, 0);
+  await setLastCollect(telegramId);
 }
 
-function getUserCollections(telegramId, limit = 20) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM collections WHERE user_id = ? ORDER BY collected_at DESC LIMIT ?')
-    .all(String(telegramId), limit);
+async function getUserCollections(telegramId, limit = 20) {
+  const res = await query('SELECT * FROM collections WHERE user_id = $1 ORDER BY collected_at DESC LIMIT $2',
+    [String(telegramId), limit]);
+  return res.rows;
 }
 
-function getTotalCollected(telegramId) {
-  const db = getDb();
-  const result = db.prepare('SELECT SUM(amount) as total FROM collections WHERE user_id = ?').get(String(telegramId));
-  return result.total || 0;
+async function getTotalCollected(telegramId) {
+  const res = await query('SELECT SUM(amount) as total FROM collections WHERE user_id = $1', [String(telegramId)]);
+  return parseFloat(res.rows[0].total) || 0;
 }
 
 // ─── TRANSFERS ───────────────────────────────────────────────────────────────
 
-function recordTransfer(telegramId, fromWallet, toWallet, amount) {
-  const db = getDb();
-  // Update balances atomically
-  const update = db.transaction(() => {
+async function recordTransfer(telegramId, fromWallet, toWallet, amount) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
     if (fromWallet === 'gamble' && toWallet === 'spot') {
-      db.prepare(`UPDATE users SET gamble_balance = gamble_balance - ?, spot_balance = spot_balance + ? WHERE telegram_id = ?`)
-        .run(amount, amount, String(telegramId));
+      await client.query('UPDATE users SET gamble_balance = gamble_balance - $1, spot_balance = spot_balance + $1 WHERE telegram_id = $2',
+        [amount, String(telegramId)]);
     } else if (fromWallet === 'spot' && toWallet === 'gamble') {
-      db.prepare(`UPDATE users SET spot_balance = spot_balance - ?, gamble_balance = gamble_balance + ? WHERE telegram_id = ?`)
-        .run(amount, amount, String(telegramId));
+      await client.query('UPDATE users SET spot_balance = spot_balance - $1, gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+        [amount, String(telegramId)]);
     }
-    db.prepare('INSERT INTO transfers (user_id, from_wallet, to_wallet, amount) VALUES (?, ?, ?, ?)')
-      .run(String(telegramId), fromWallet, toWallet, amount);
-  });
-  update();
+    await client.query('INSERT INTO transfers (user_id, from_wallet, to_wallet, amount) VALUES ($1, $2, $3, $4)',
+      [String(telegramId), fromWallet, toWallet, amount]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
 
-function createWithdrawal(telegramId, amount, solanaAddress) {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET spot_balance = spot_balance - ? WHERE telegram_id = ?`)
-      .run(amount, String(telegramId));
-    const result = db.prepare(`
-      INSERT INTO withdrawals (user_id, amount, solana_address) VALUES (?, ?, ?)
-    `).run(String(telegramId), amount, solanaAddress);
-    return result.lastInsertRowid;
-  });
-  return tx();
+async function createWithdrawal(telegramId, amount, solanaAddress) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET spot_balance = spot_balance - $1 WHERE telegram_id = $2',
+      [amount, String(telegramId)]);
+    const res = await client.query(
+      'INSERT INTO withdrawals (user_id, amount, solana_address) VALUES ($1, $2, $3) RETURNING id',
+      [String(telegramId), amount, solanaAddress]);
+    await client.query('COMMIT');
+    return res.rows[0].id;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
-function getUserWithdrawals(telegramId) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY created_at DESC').all(String(telegramId));
+async function getUserWithdrawals(telegramId) {
+  const res = await query('SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC', [String(telegramId)]);
+  return res.rows;
 }
 
-function getPendingWithdrawals() {
-  const db = getDb();
-  return db.prepare(`
+async function getPendingWithdrawals() {
+  const res = await query(`
     SELECT w.*, u.username, u.first_name 
     FROM withdrawals w JOIN users u ON w.user_id = u.telegram_id
     WHERE w.status = 'pending' ORDER BY w.created_at ASC
-  `).all();
+  `);
+  return res.rows;
 }
 
-function updateWithdrawalStatus(id, status, txHash = null, notes = null) {
-  const db = getDb();
-  db.prepare(`
-    UPDATE withdrawals SET status = ?, tx_hash = ?, notes = ?, updated_at = datetime('now') WHERE id = ?
-  `).run(status, txHash, notes, id);
+async function updateWithdrawalStatus(id, status, txHash = null, notes = null) {
+  await query('UPDATE withdrawals SET status = $1, tx_hash = $2, notes = $3, updated_at = NOW() WHERE id = $4',
+    [status, txHash, notes, id]);
 }
 
-function getWithdrawalById(id) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id);
+async function getWithdrawalById(id) {
+  const res = await query('SELECT * FROM withdrawals WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-function refundWithdrawal(withdrawal) {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET spot_balance = spot_balance + ? WHERE telegram_id = ?`)
-      .run(withdrawal.amount, withdrawal.user_id);
-    db.prepare(`UPDATE withdrawals SET status = 'failed', updated_at = datetime('now') WHERE id = ?`)
-      .run(withdrawal.id);
-  });
-  tx();
+async function refundWithdrawal(withdrawal) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET spot_balance = spot_balance + $1 WHERE telegram_id = $2',
+      [withdrawal.amount, withdrawal.user_id]);
+    await client.query("UPDATE withdrawals SET status = 'failed', updated_at = NOW() WHERE id = $1",
+      [withdrawal.id]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── BATTLES ─────────────────────────────────────────────────────────────────
 
-function createBattle(challengerId, wagerAmount) {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET gamble_balance = gamble_balance - ? WHERE telegram_id = ?`)
-      .run(wagerAmount, String(challengerId));
-    const result = db.prepare(`
-      INSERT INTO battles (challenger_id, wager_amount) VALUES (?, ?)
-    `).run(String(challengerId), wagerAmount);
-    return result.lastInsertRowid;
-  });
-  return tx();
+async function createBattle(challengerId, wagerAmount) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET gamble_balance = gamble_balance - $1 WHERE telegram_id = $2',
+      [wagerAmount, String(challengerId)]);
+    const res = await client.query('INSERT INTO battles (challenger_id, wager_amount) VALUES ($1, $2) RETURNING id',
+      [String(challengerId), wagerAmount]);
+    await client.query('COMMIT');
+    return res.rows[0].id;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
-function getOpenBattles(excludeUserId) {
-  const db = getDb();
-  return db.prepare(`
+async function getOpenBattles(excludeUserId) {
+  const res = await query(`
     SELECT b.*, u.username as challenger_name, u.first_name as challenger_first
     FROM battles b JOIN users u ON b.challenger_id = u.telegram_id
-    WHERE b.status = 'open' AND b.challenger_id != ?
+    WHERE b.status = 'open' AND b.challenger_id != $1
     ORDER BY b.created_at DESC LIMIT 10
-  `).all(String(excludeUserId));
+  `, [String(excludeUserId)]);
+  return res.rows;
 }
 
-function getBattleById(id) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM battles WHERE id = ?').get(id);
+async function getBattleById(id) {
+  const res = await query('SELECT * FROM battles WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-function acceptBattle(battleId, opponentId) {
-  const db = getDb();
-  const battle = getBattleById(battleId);
+async function acceptBattle(battleId, opponentId) {
+  const battle = await getBattleById(battleId);
   if (!battle || battle.status !== 'open') return null;
 
-  const challengerRoll = Math.floor(Math.random() * 100) + 1;
-  const opponentRoll = Math.floor(Math.random() * 100) + 1;
-  
-  // Re-roll on tie
-  let finalChallenger = challengerRoll;
-  let finalOpponent = opponentRoll;
-  if (finalChallenger === finalOpponent) {
-    finalChallenger = Math.floor(Math.random() * 100) + 1;
-    finalOpponent = Math.floor(Math.random() * 100) + 1;
+  let challengerRoll = Math.floor(Math.random() * 100) + 1;
+  let opponentRoll = Math.floor(Math.random() * 100) + 1;
+  if (challengerRoll === opponentRoll) {
+    challengerRoll = Math.floor(Math.random() * 100) + 1;
+    opponentRoll = Math.floor(Math.random() * 100) + 1;
   }
-  
-  const winnerId = finalChallenger > finalOpponent ? battle.challenger_id : String(opponentId);
-  const loserId = winnerId === battle.challenger_id ? String(opponentId) : battle.challenger_id;
+
+  const winnerId = challengerRoll > opponentRoll ? battle.challenger_id : String(opponentId);
   const pot = battle.wager_amount * 2;
 
-  const tx = db.transaction(() => {
-    // Deduct wager from opponent
-    db.prepare(`UPDATE users SET gamble_balance = gamble_balance - ? WHERE telegram_id = ?`)
-      .run(battle.wager_amount, String(opponentId));
-    // Award pot to winner
-    db.prepare(`UPDATE users SET gamble_balance = gamble_balance + ? WHERE telegram_id = ?`)
-      .run(pot, winnerId);
-    // Update battle record
-    db.prepare(`
-      UPDATE battles SET opponent_id = ?, status = 'completed', winner_id = ?,
-      challenger_roll = ?, opponent_roll = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(String(opponentId), winnerId, finalChallenger, finalOpponent, battleId);
-  });
-  tx();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET gamble_balance = gamble_balance - $1 WHERE telegram_id = $2',
+      [battle.wager_amount, String(opponentId)]);
+    await client.query('UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+      [pot, winnerId]);
+    await client.query(`
+      UPDATE battles SET opponent_id = $1, status = 'completed', winner_id = $2,
+      challenger_roll = $3, opponent_roll = $4, updated_at = NOW()
+      WHERE id = $5
+    `, [String(opponentId), winnerId, challengerRoll, opponentRoll, battleId]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 
-  return { ...battle, opponent_id: opponentId, winner_id: winnerId, challenger_roll: finalChallenger, opponent_roll: finalOpponent };
+  return { ...battle, opponent_id: opponentId, winner_id: winnerId, challenger_roll: challengerRoll, opponent_roll: opponentRoll };
 }
 
-function cancelBattle(battleId) {
-  const db = getDb();
-  const battle = getBattleById(battleId);
+async function cancelBattle(battleId) {
+  const battle = await getBattleById(battleId);
   if (!battle || battle.status !== 'open') return false;
-  const tx = db.transaction(() => {
-    db.prepare(`UPDATE users SET gamble_balance = gamble_balance + ? WHERE telegram_id = ?`)
-      .run(battle.wager_amount, battle.challenger_id);
-    db.prepare(`UPDATE battles SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`)
-      .run(battleId);
-  });
-  tx();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+      [battle.wager_amount, battle.challenger_id]);
+    await client.query("UPDATE battles SET status = 'cancelled', updated_at = NOW() WHERE id = $1", [battleId]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
   return true;
 }
 
-function getUserBattles(telegramId, limit = 10) {
-  const db = getDb();
-  return db.prepare(`
+async function getUserBattles(telegramId, limit = 10) {
+  const res = await query(`
     SELECT b.*,
       uc.username as challenger_name, uc.first_name as challenger_first,
       uo.username as opponent_name, uo.first_name as opponent_first
     FROM battles b
     LEFT JOIN users uc ON b.challenger_id = uc.telegram_id
     LEFT JOIN users uo ON b.opponent_id = uo.telegram_id
-    WHERE (b.challenger_id = ? OR b.opponent_id = ?) AND b.status = 'completed'
-    ORDER BY b.updated_at DESC LIMIT ?
-  `).all(String(telegramId), String(telegramId), limit);
+    WHERE (b.challenger_id = $1 OR b.opponent_id = $1) AND b.status = 'completed'
+    ORDER BY b.updated_at DESC LIMIT $2
+  `, [String(telegramId), limit]);
+  return res.rows;
 }
 
-function getBattleStats(telegramId) {
-  const db = getDb();
-  const wins = db.prepare(`SELECT COUNT(*) as c FROM battles WHERE winner_id = ? AND status = 'completed'`).get(String(telegramId)).c;
-  const total = db.prepare(`SELECT COUNT(*) as c FROM battles WHERE (challenger_id = ? OR opponent_id = ?) AND status = 'completed'`).get(String(telegramId), String(telegramId)).c;
-  const earned = db.prepare(`SELECT SUM(wager_amount) as s FROM battles WHERE winner_id = ? AND status = 'completed'`).get(String(telegramId)).s || 0;
+async function getBattleStats(telegramId) {
+  const tid = String(telegramId);
+  const winsRes = await query("SELECT COUNT(*) as c FROM battles WHERE winner_id = $1 AND status = 'completed'", [tid]);
+  const totalRes = await query("SELECT COUNT(*) as c FROM battles WHERE (challenger_id = $1 OR opponent_id = $2) AND status = 'completed'", [tid, tid]);
+  const earnedRes = await query("SELECT COALESCE(SUM(wager_amount), 0) as s FROM battles WHERE winner_id = $1 AND status = 'completed'", [tid]);
+  const wins = parseInt(winsRes.rows[0].c);
+  const total = parseInt(totalRes.rows[0].c);
+  const earned = parseFloat(earnedRes.rows[0].s) || 0;
   return { wins, losses: total - wins, total, earned: earned * 2 };
 }
 
 // ─── REFERRALS ───────────────────────────────────────────────────────────────
 
-function creditReferral(referrerId, referredId, bonusAmount = 500) {
-  const db = getDb();
-  // Check if already credited
-  const exists = db.prepare('SELECT id FROM referrals WHERE referred_id = ?').get(String(referredId));
-  if (exists) return false;
-  
-  const tx = db.transaction(() => {
-    db.prepare('INSERT INTO referrals (referrer_id, referred_id, bonus_amount) VALUES (?, ?, ?)')
-      .run(String(referrerId), String(referredId), bonusAmount);
-    db.prepare(`UPDATE users SET gamble_balance = gamble_balance + ? WHERE telegram_id = ?`)
-      .run(bonusAmount, String(referrerId));
-  });
-  tx();
+async function creditReferral(referrerId, referredId, bonusAmount = 500) {
+  const existing = await query('SELECT id FROM referrals WHERE referred_id = $1', [String(referredId)]);
+  if (existing.rows.length > 0) return false;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('INSERT INTO referrals (referrer_id, referred_id, bonus_amount) VALUES ($1, $2, $3)',
+      [String(referrerId), String(referredId), bonusAmount]);
+    await client.query('UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+      [bonusAmount, String(referrerId)]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
   return true;
 }
 
-function getReferralStats(telegramId) {
-  const db = getDb();
-  const count = db.prepare('SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ?').get(String(telegramId)).c;
-  const total = db.prepare('SELECT SUM(bonus_amount) as s FROM referrals WHERE referrer_id = ?').get(String(telegramId)).s || 0;
-  return { count, totalEarned: total };
+async function getReferralStats(telegramId) {
+  const countRes = await query('SELECT COUNT(*) as c FROM referrals WHERE referrer_id = $1', [String(telegramId)]);
+  const totalRes = await query('SELECT COALESCE(SUM(bonus_amount), 0) as s FROM referrals WHERE referrer_id = $1', [String(telegramId)]);
+  return { count: parseInt(countRes.rows[0].c), totalEarned: parseFloat(totalRes.rows[0].s) || 0 };
 }
 
-function getUserByReferralCode(code) {
-  const db = getDb();
-  return db.prepare('SELECT * FROM users WHERE referral_code = ?').get(code);
+async function getUserByReferralCode(code) {
+  const res = await query('SELECT * FROM users WHERE referral_code = $1', [code]);
+  return res.rows[0] || null;
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
 
-function getTopCollectors(limit = 10) {
-  const db = getDb();
-  return db.prepare(`
+async function getTopCollectors(limit = 10) {
+  const res = await query(`
     SELECT u.telegram_id, u.username, u.first_name,
       SUM(c.amount) as total_collected, COUNT(c.id) as collect_count
     FROM collections c JOIN users u ON c.user_id = u.telegram_id
-    GROUP BY c.user_id ORDER BY total_collected DESC LIMIT ?
-  `).all(limit);
+    GROUP BY u.telegram_id, u.username, u.first_name ORDER BY total_collected DESC LIMIT $1
+  `, [limit]);
+  return res.rows;
 }
 
-function getTopBattlers(limit = 10) {
-  const db = getDb();
-  return db.prepare(`
+async function getTopBattlers(limit = 10) {
+  const res = await query(`
     SELECT u.telegram_id, u.username, u.first_name,
       COUNT(b.id) as wins,
       SUM(b.wager_amount * 2) as total_won
     FROM battles b JOIN users u ON b.winner_id = u.telegram_id
     WHERE b.status = 'completed'
-    GROUP BY b.winner_id ORDER BY wins DESC LIMIT ?
-  `).all(limit);
+    GROUP BY u.telegram_id, u.username, u.first_name ORDER BY wins DESC LIMIT $1
+  `, [limit]);
+  return res.rows;
 }
 
-function getTopReferrers(limit = 10) {
-  const db = getDb();
-  return db.prepare(`
+async function getTopReferrers(limit = 10) {
+  const res = await query(`
     SELECT u.telegram_id, u.username, u.first_name,
       COUNT(r.id) as referral_count,
       SUM(r.bonus_amount) as total_bonus
     FROM referrals r JOIN users u ON r.referrer_id = u.telegram_id
-    GROUP BY r.referrer_id ORDER BY referral_count DESC LIMIT ?
-  `).all(limit);
+    GROUP BY u.telegram_id, u.username, u.first_name ORDER BY referral_count DESC LIMIT $1
+  `, [limit]);
+  return res.rows;
 }
 
-function getStats() {
-  const db = getDb();
-  const users = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-  const totalCollected = db.prepare('SELECT SUM(amount) as s FROM collections').get().s || 0;
-  const totalBattles = db.prepare(`SELECT COUNT(*) as c FROM battles WHERE status = 'completed'`).get().c;
-  const totalWithdrawn = db.prepare(`SELECT SUM(amount) as s FROM withdrawals WHERE status = 'completed'`).get().s || 0;
-  return { users, totalCollected, totalBattles, totalWithdrawn };
+async function getStats() {
+  const usersRes = await query('SELECT COUNT(*) as c FROM users');
+  const collectedRes = await query('SELECT COALESCE(SUM(amount), 0) as s FROM collections');
+  const battlesRes = await query("SELECT COUNT(*) as c FROM battles WHERE status = 'completed'");
+  const withdrawnRes = await query("SELECT COALESCE(SUM(amount), 0) as s FROM withdrawals WHERE status = 'completed'");
+  return {
+    users: parseInt(usersRes.rows[0].c),
+    totalCollected: parseFloat(collectedRes.rows[0].s) || 0,
+    totalBattles: parseInt(battlesRes.rows[0].c),
+    totalWithdrawn: parseFloat(withdrawnRes.rows[0].s) || 0
+  };
 }
 
 module.exports = {

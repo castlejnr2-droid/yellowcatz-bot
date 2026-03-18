@@ -60,13 +60,13 @@ async function handleStart(bot, msg, referralCode) {
 
   let referredBy = null;
   if (referralCode && referralCode.startsWith('ref_')) {
-    const referrer = db.getUserByReferralCode(referralCode);
+    const referrer = await db.getUserByReferralCode(referralCode);
     if (referrer && String(referrer.telegram_id) !== String(telegramId)) {
       referredBy = referralCode;
     }
   }
 
-  const user = db.getOrCreateUser({ telegramId, username, firstName, referredBy });
+  const user = await db.getOrCreateUser({ telegramId, username, firstName, referredBy });
   console.log(`[START] User ${telegramId} balance:`, JSON.stringify({gamble: user?.gamble_balance, spot: user?.spot_balance}));
 
   await bot.sendMessage(chatId, getPortfolioText(user), {
@@ -76,7 +76,7 @@ async function handleStart(bot, msg, referralCode) {
 }
 
 async function handleRefresh(bot, chatId, telegramId) {
-  const user = db.getUser(telegramId);
+  const user = await db.getUser(telegramId);
   if (!user) return;
   try {
     await bot.editMessageText(getPortfolioText(user), {

@@ -1,4 +1,4 @@
-const { handleStart, handleRefresh, getMainMenuKeyboard, getPortfolioText } = require('../commands/start');
+const { getMainMenuKeyboard, getPortfolioText } = require('../commands/start');
 const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, confirmWithdrawal, clearState } = require('./funds');
 const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
@@ -18,7 +18,6 @@ async function _handleCallback(bot, query) {
   try { await bot.answerCallbackQuery(queryId); } catch {}
   const msgId = message.message_id;
 
-  // Helper to edit in place
   async function edit(text, opts = {}) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts });
@@ -29,7 +28,7 @@ async function _handleCallback(bot, query) {
 
   // ── Main Menu ──
   if (data === 'back_main' || data === 'menu_refresh') {
-    const user = db.getOrCreateUser({ telegramId, username, firstName });
+    const user = await db.getOrCreateUser({ telegramId, username, firstName });
     return await edit(getPortfolioText(user), { reply_markup: getMainMenuKeyboard(chatId) });
   }
 
@@ -69,8 +68,8 @@ async function _handleCallback(bot, query) {
 }
 
 async function showLeaderboard(bot, chatId, msgId) {
-  const topCollectors = db.getTopCollectors(5);
-  const topBattlers = db.getTopBattlers(5);
+  const topCollectors = await db.getTopCollectors(5);
+  const topBattlers = await db.getTopBattlers(5);
 
   let text = `🏆 *Leaderboard*\n\n`;
 

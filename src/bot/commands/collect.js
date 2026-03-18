@@ -22,11 +22,11 @@ async function handleCollect(bot, msg) {
   const { id: telegramId, username, first_name: firstName } = msg.from;
   const chatId = msg.chat.id;
 
-  const user = db.getOrCreateUser({ telegramId, username, firstName });
+  const user = await db.getOrCreateUser({ telegramId, username, firstName });
 
   // Check cooldown
   if (user.last_collect_at) {
-    const lastCollect = new Date(user.last_collect_at + 'Z').getTime();
+    const lastCollect = new Date(user.last_collect_at).getTime();
     const now = Date.now();
     const elapsed = now - lastCollect;
     if (elapsed < COOLDOWN_MS) {
@@ -44,7 +44,7 @@ async function handleCollect(bot, msg) {
   const amount = randomCollectAmount();
   console.log(`[COLLECT] User ${telegramId} collecting ${amount} tokens...`);
   try {
-    db.recordCollection(telegramId, amount);
+    await db.recordCollection(telegramId, amount);
     console.log(`[COLLECT] recordCollection done for ${telegramId}`);
   } catch (err) {
     console.error(`[COLLECT] ERROR:`, err.message);
@@ -53,11 +53,11 @@ async function handleCollect(bot, msg) {
   }
 
   // Handle first-collect referral bonus
-  const collections = db.getUserCollections(telegramId);
+  const collections = await db.getUserCollections(telegramId);
   if (collections.length === 1 && user.referred_by) {
-    const referrer = db.getUserByReferralCode(user.referred_by);
+    const referrer = await db.getUserByReferralCode(user.referred_by);
     if (referrer) {
-      const credited = db.creditReferral(referrer.telegram_id, telegramId, REFERRAL_BONUS);
+      const credited = await db.creditReferral(referrer.telegram_id, telegramId, REFERRAL_BONUS);
       if (credited) {
         try {
           await bot.sendMessage(
@@ -72,7 +72,7 @@ async function handleCollect(bot, msg) {
     }
   }
 
-  const refreshedUser = db.getUser(telegramId);
+  const refreshedUser = await db.getUser(telegramId);
   console.log(`[COLLECT] After update, user ${telegramId} balance:`, JSON.stringify({gamble: refreshedUser?.gamble_balance, spot: refreshedUser?.spot_balance}));
   const newBalance = Number(refreshedUser.gamble_balance || 0);
 

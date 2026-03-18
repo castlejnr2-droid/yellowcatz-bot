@@ -1,20 +1,17 @@
 require('dotenv').config();
 process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.message); });
 process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
+
 const { createBot } = require('./bot/bot');
 const { createServer } = require('./server/index');
-const { getDbAsync } = require('./db/index');
+const { initSchema } = require('./db/index');
 
 async function main() {
   console.log('🐱 Starting YellowCatz...\n');
 
-  // Initialize database (async for sql.js)
-  await getDbAsync();
+  await initSchema();
 
-  // Start web server
   createServer();
-
-  // Start Telegram bot
   createBot();
 
   console.log('\n✅ YellowCatz is fully running!');

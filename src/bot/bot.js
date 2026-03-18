@@ -65,16 +65,16 @@ function createBot() {
   bot.onText(/\/approve_(\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const withdrawalId = parseInt(match[1]);
-    const withdrawal = db.getWithdrawalById(withdrawalId);
+    const withdrawal = await db.getWithdrawalById(withdrawalId);
     if (!withdrawal) return await bot.sendMessage(msg.chat.id, `❌ Withdrawal #${withdrawalId} not found.`);
     if (withdrawal.status !== 'pending') return await bot.sendMessage(msg.chat.id, `❌ Already ${withdrawal.status}.`);
 
-    db.updateWithdrawalStatus(withdrawalId, 'processing');
+    await db.updateWithdrawalStatus(withdrawalId, 'processing');
     await bot.sendMessage(msg.chat.id, `🔄 Processing withdrawal #${withdrawalId}...`);
 
     try {
       const txHash = await sendTokens(withdrawal.solana_address, withdrawal.amount);
-      db.updateWithdrawalStatus(withdrawalId, 'completed', txHash);
+      await db.updateWithdrawalStatus(withdrawalId, 'completed', txHash);
       await bot.sendMessage(msg.chat.id, `✅ Withdrawal #${withdrawalId} completed!\nTX: \`${txHash}\``, { parse_mode: 'Markdown' });
 
       // Notify user
@@ -88,8 +88,8 @@ function createBot() {
         );
       } catch { }
     } catch (err) {
-      db.updateWithdrawalStatus(withdrawalId, 'failed', null, err.message);
-      db.refundWithdrawal(withdrawal);
+      await db.updateWithdrawalStatus(withdrawalId, 'failed', null, err.message);
+      await db.refundWithdrawal(withdrawal);
       await bot.sendMessage(msg.chat.id, `❌ Failed: ${err.message}\nBalance refunded.`);
       try {
         await bot.sendMessage(withdrawal.user_id,
@@ -106,9 +106,9 @@ function createBot() {
   bot.onText(/\/reject_(\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const withdrawalId = parseInt(match[1]);
-    const withdrawal = db.getWithdrawalById(withdrawalId);
+    const withdrawal = await db.getWithdrawalById(withdrawalId);
     if (!withdrawal) return await bot.sendMessage(msg.chat.id, `❌ Not found.`);
-    db.refundWithdrawal(withdrawal);
+    await db.refundWithdrawal(withdrawal);
     await bot.sendMessage(msg.chat.id, `✅ Rejected & refunded #${withdrawalId}.`);
     try {
       await bot.sendMessage(withdrawal.user_id,
@@ -123,7 +123,7 @@ function createBot() {
   // /pending — show pending withdrawals
   bot.onText(/\/pending/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
-    const pending = db.getPendingWithdrawals();
+    const pending = await db.getPendingWithdrawals();
     if (pending.length === 0) return await bot.sendMessage(msg.chat.id, `✅ No pending withdrawals.`);
     let text = `📋 *Pending Withdrawals (${pending.length}):*\n\n`;
     pending.forEach(w => {
@@ -138,7 +138,7 @@ function createBot() {
   // /stats — admin stats
   bot.onText(/\/stats/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
-    const stats = db.getStats();
+    const stats = await db.getStats();
     await bot.sendMessage(msg.chat.id,
       `📊 *YellowCatz Stats*\n\n` +
       `👥 Users: \`${stats.users}\`\n` +

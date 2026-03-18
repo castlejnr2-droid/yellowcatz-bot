@@ -1,73 +1,66 @@
--- YellowCatz Database Schema
+-- YellowCatz Database Schema (PostgreSQL)
 
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   telegram_id TEXT UNIQUE NOT NULL,
   username TEXT,
   first_name TEXT,
-  gamble_balance REAL DEFAULT 0,
-  spot_balance REAL DEFAULT 0,
+  gamble_balance DOUBLE PRECISION DEFAULT 0,
+  spot_balance DOUBLE PRECISION DEFAULT 0,
   referral_code TEXT UNIQUE,
   referred_by TEXT,
-  last_collect_at TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
+  last_collect_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS collections (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL,
-  amount REAL NOT NULL,
-  collected_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(telegram_id),
+  amount DOUBLE PRECISION NOT NULL,
+  collected_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS transfers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL,
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(telegram_id),
   from_wallet TEXT NOT NULL CHECK(from_wallet IN ('gamble','spot')),
   to_wallet TEXT NOT NULL CHECK(to_wallet IN ('gamble','spot')),
-  amount REAL NOT NULL,
-  created_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+  amount DOUBLE PRECISION NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS withdrawals (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL,
-  amount REAL NOT NULL,
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(telegram_id),
+  amount DOUBLE PRECISION NOT NULL,
   solana_address TEXT NOT NULL,
   status TEXT DEFAULT 'pending' CHECK(status IN ('pending','processing','completed','failed')),
   tx_hash TEXT,
   notes TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS battles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  challenger_id TEXT NOT NULL,
+  id SERIAL PRIMARY KEY,
+  challenger_id TEXT NOT NULL REFERENCES users(telegram_id),
   opponent_id TEXT,
-  wager_amount REAL NOT NULL,
+  wager_amount DOUBLE PRECISION NOT NULL,
   status TEXT DEFAULT 'open' CHECK(status IN ('open','accepted','completed','cancelled','expired')),
   winner_id TEXT,
   challenger_roll INTEGER,
   opponent_roll INTEGER,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (challenger_id) REFERENCES users(telegram_id),
-  FOREIGN KEY (opponent_id) REFERENCES users(telegram_id)
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS referrals (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  referrer_id TEXT NOT NULL,
-  referred_id TEXT NOT NULL,
-  bonus_amount REAL DEFAULT 500,
-  credited_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (referrer_id) REFERENCES users(telegram_id),
-  FOREIGN KEY (referred_id) REFERENCES users(telegram_id)
+  id SERIAL PRIMARY KEY,
+  referrer_id TEXT NOT NULL REFERENCES users(telegram_id),
+  referred_id TEXT NOT NULL REFERENCES users(telegram_id),
+  bonus_amount DOUBLE PRECISION DEFAULT 500,
+  credited_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Indexes

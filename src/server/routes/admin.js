@@ -13,34 +13,34 @@ function adminAuth(req, res, next) {
 
 router.use(adminAuth);
 
-router.get('/pending-withdrawals', (req, res) => {
-  const pending = db.getPendingWithdrawals();
+router.get('/pending-withdrawals', async (req, res) => {
+  const pending = await db.getPendingWithdrawals();
   res.json({ success: true, data: pending });
 });
 
-router.post('/withdrawal/:id/approve', (req, res) => {
+router.post('/withdrawal/:id/approve', async (req, res) => {
   const { id } = req.params;
-  const w = db.getWithdrawalById(id);
+  const w = await db.getWithdrawalById(id);
   if (!w) return res.status(404).json({ success: false, error: 'Not found' });
-  db.updateWithdrawalStatus(id, 'processing');
+  await db.updateWithdrawalStatus(id, 'processing');
   res.json({ success: true, message: `Processing withdrawal #${id}` });
 });
 
-router.post('/withdrawal/:id/reject', (req, res) => {
+router.post('/withdrawal/:id/reject', async (req, res) => {
   const { id } = req.params;
-  const w = db.getWithdrawalById(id);
+  const w = await db.getWithdrawalById(id);
   if (!w) return res.status(404).json({ success: false, error: 'Not found' });
-  db.refundWithdrawal(w);
+  await db.refundWithdrawal(w);
   res.json({ success: true, message: `Rejected & refunded #${id}` });
 });
 
-router.get('/users', (req, res) => {
-  const users = db.getAllUsers();
+router.get('/users', async (req, res) => {
+  const users = await db.getAllUsers();
   res.json({ success: true, data: users });
 });
 
-router.get('/stats', (req, res) => {
-  const stats = db.getStats();
+router.get('/stats', async (req, res) => {
+  const stats = await db.getStats();
   res.json({ success: true, data: stats });
 });
 
