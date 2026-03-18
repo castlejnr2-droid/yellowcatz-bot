@@ -22,11 +22,6 @@ async function handleCollect(bot, msg) {
   const { id: telegramId, username, first_name: firstName } = msg.from;
   const chatId = msg.chat.id;
 
-  if (msg.chat.type !== 'private') {
-    await bot.sendMessage(chatId, `❌ The */collect* command is only allowed in private chats.`, { parse_mode: 'Markdown' });
-    return;
-  }
-
   const user = db.getOrCreateUser({ telegramId, username, firstName });
 
   // Check cooldown
