@@ -37,7 +37,14 @@ function getFundsKeyboard() {
   };
 }
 
-async function showFundsMenu(bot, chatId, telegramId) {
+async function editOrSend(bot, chatId, msgId, text, opts = {}) {
+  if (msgId) {
+    try { return await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts }); } catch {}
+  }
+  return await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
+}
+
+async function showFundsMenu(bot, chatId, telegramId, msgId) {
   const user = db.getUser(telegramId);
   if (!user) return;
 
@@ -47,75 +54,72 @@ async function showFundsMenu(bot, chatId, telegramId) {
     `💲 Spot Balance:   \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\n` +
     `Choose an action:`;
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: getFundsKeyboard()
-  });
+  await editOrSend(bot, chatId, msgId, text, { reply_markup: getFundsKeyboard() });
 }
 
-async function handleToSpot(bot, chatId, telegramId) {
+async function handleToSpot(bot, chatId, telegramId, msgId) {
   const user = db.getUser(telegramId);
   if (!user) return;
   if ((user.gamble_balance || 0) <= 0) {
-    return await bot.sendMessage(chatId,
+    return await editOrSend(bot, chatId, msgId,
       `🐱 Your Gamble Balance is empty!\n\nUse /collect to earn tokens first.`,
       { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
     );
   }
   setState(telegramId, { step: 'transfer_to_spot' });
-  await bot.sendMessage(chatId,
+  await editOrSend(bot, chatId, msgId,
     `💲 *Transfer to Spot Balance*\n\n` +
     `Gamble Balance: \`${formatBalance(user.gamble_balance)} $YellowCatz\`\n\n` +
     `Enter amount to transfer (or type \`all\`):`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
+    { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
   );
 }
 
-async function handleToGamble(bot, chatId, telegramId) {
+async function handleToGamble(bot, chatId, telegramId, msgId) {
   const user = db.getUser(telegramId);
   if (!user) return;
   if ((user.spot_balance || 0) <= 0) {
-    return await bot.sendMessage(chatId,
+    return await editOrSend(bot, chatId, msgId,
       `🐱 Your Spot Balance is empty!`,
       { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
     );
   }
   setState(telegramId, { step: 'transfer_to_gamble' });
-  await bot.sendMessage(chatId,
+  await editOrSend(bot, chatId, msgId,
     `🎰 *Transfer to Gamble Balance*\n\n` +
     `Spot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\n` +
     `Enter amount to transfer (or type \`all\`):`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
+    { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
   );
 }
 
-async function handleWithdrawStart(bot, chatId, telegramId) {
+async function handleWithdrawStart(bot, chatId, telegramId, msgId) {
   const user = db.getUser(telegramId);
   if (!user) return;
   if ((user.spot_balance || 0) < MIN_WITHDRAW) {
-    return await bot.sendMessage(chatId,
+    return await editOrSend(bot, chatId, msgId,
       `🐱 *Minimum Withdrawal: ${MIN_WITHDRAW.toLocaleString()} $YellowCatz*\n\n` +
       `Your Spot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\n` +
       `Transfer tokens to your Spot Balance first!`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
+      { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
     );
   }
   setState(telegramId, { step: 'withdraw_amount' });
-  await bot.sendMessage(chatId,
+  await editOrSend(bot, chatId, msgId,
     `🐱 *Withdraw $YellowCatz*\n\n` +
     `Spot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\n` +
     `Minimum: \`${MIN_WITHDRAW.toLocaleString()} $YellowCatz\`\n\n` +
     `Enter amount to withdraw (or type \`all\`):`,
-    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
+    { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } }
   );
 }
 
-async function showWithdrawalHistory(bot, chatId, telegramId) {
+async function showWithdrawalHistory(bot, chatId, telegramId, msgId) {
   const withdrawals = db.getUserWithdrawals(telegramId);
   if (withdrawals.length === 0) {
-    return await bot.sendMessage(chatId,
+    return await editOrSend(bot, chatId, msgId,
       `📒 *Withdrawal History*\n\n_No withdrawals yet._`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
+      { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } }
     );
   }
 
@@ -130,8 +134,7 @@ async function showWithdrawalHistory(bot, chatId, telegramId) {
     text += '\n';
   });
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+  await editOrSend(bot, chatId, msgId, text, {
     reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] }
   });
 }
@@ -243,7 +246,7 @@ async function handleTextInput(bot, msg) {
   return false;
 }
 
-async function confirmWithdrawal(bot, chatId, telegramId) {
+async function confirmWithdrawal(bot, chatId, telegramId, msgId) {
   const state = getState(telegramId);
   if (!state || state.step !== 'withdraw_confirm') {
     return await bot.sendMessage(chatId, `❌ No pending withdrawal. Start again with Manage Funds.`);

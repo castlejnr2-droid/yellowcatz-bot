@@ -6,70 +6,69 @@ const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
 
 async function handleCallbackQuery(bot, query) {
+  try { await _handleCallback(bot, query); } catch (err) { console.error('[CALLBACK ERROR]', err.message); }
+}
+
+async function _handleCallback(bot, query) {
   const { id: queryId, message, from, data } = query;
   const chatId = message.chat.id;
   const telegramId = from.id;
   const { username, first_name: firstName } = from;
 
-  await bot.answerCallbackQuery(queryId).catch(() => {});
+  try { await bot.answerCallbackQuery(queryId); } catch {}
+  const msgId = message.message_id;
+
+  // Helper to edit in place
+  async function edit(text, opts = {}) {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts });
+    } catch {
+      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
+    }
+  }
 
   // ── Main Menu ──
   if (data === 'back_main' || data === 'menu_refresh') {
     const user = db.getOrCreateUser({ telegramId, username, firstName });
-    try {
-      await bot.editMessageText(getPortfolioText(user), {
-        chat_id: chatId,
-        message_id: message.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(chatId)
-      });
-    } catch {
-      await bot.sendMessage(chatId, getPortfolioText(user), {
-        parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(chatId)
-      });
-    }
-    return;
+    return await edit(getPortfolioText(user), { reply_markup: getMainMenuKeyboard(chatId) });
   }
 
   // ── Funds Menu ──
   if (data === 'menu_funds') {
     clearState(telegramId);
-    return await showFundsMenu(bot, chatId, telegramId);
+    return await showFundsMenu(bot, chatId, telegramId, msgId);
   }
-  if (data === 'funds_to_spot') return await handleToSpot(bot, chatId, telegramId);
-  if (data === 'funds_to_gamble') return await handleToGamble(bot, chatId, telegramId);
-  if (data === 'funds_withdraw') return await handleWithdrawStart(bot, chatId, telegramId);
-  if (data === 'funds_history') return await showWithdrawalHistory(bot, chatId, telegramId);
+  if (data === 'funds_to_spot') return await handleToSpot(bot, chatId, telegramId, msgId);
+  if (data === 'funds_to_gamble') return await handleToGamble(bot, chatId, telegramId, msgId);
+  if (data === 'funds_withdraw') return await handleWithdrawStart(bot, chatId, telegramId, msgId);
+  if (data === 'funds_history') return await showWithdrawalHistory(bot, chatId, telegramId, msgId);
   if (data === 'funds_cancel') {
     clearState(telegramId);
-    return await bot.sendMessage(chatId, `❌ Cancelled.`, {
-      reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] }
-    });
+    return await edit(`❌ Cancelled.`, { reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] } });
   }
-  if (data === 'withdraw_confirm') return await confirmWithdrawal(bot, chatId, telegramId);
+  if (data === 'withdraw_confirm') return await confirmWithdrawal(bot, chatId, telegramId, msgId);
 
   // ── Referral ──
-  if (data === 'menu_referral') return await showReferralMenu(bot, chatId, telegramId);
+  if (data === 'menu_referral') return await showReferralMenu(bot, chatId, telegramId, msgId);
 
   // ── Battles ──
-  if (data === 'menu_battles') return await showBattleMenu(bot, chatId, telegramId);
-  if (data === 'battle_list') return await showBattleMenu(bot, chatId, telegramId);
-  if (data === 'battle_history') return await handleBattleHistory(bot, chatId, telegramId);
+  if (data === 'menu_battles') return await showBattleMenu(bot, chatId, telegramId, msgId);
+  if (data === 'battle_list') return await showBattleMenu(bot, chatId, telegramId, msgId);
+  if (data === 'battle_history') return await handleBattleHistory(bot, chatId, telegramId, msgId);
   if (data.startsWith('battle_accept_')) {
     const battleId = parseInt(data.replace('battle_accept_', ''));
-    return await handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, message.message_id);
+    return await handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, msgId);
   }
   if (data.startsWith('battle_cancel_')) {
     const battleId = parseInt(data.replace('battle_cancel_', ''));
-    return await handleCancelBattle(bot, chatId, telegramId, battleId);
+    return await handleCancelBattle(bot, chatId, telegramId, battleId, msgId);
   }
 
   // ── Leaderboard ──
-  if (data === 'menu_leaderboard') return await showLeaderboard(bot, chatId);
+  if (data === 'menu_leaderboard') return await showLeaderboard(bot, chatId, msgId);
 }
 
-async function showLeaderboard(bot, chatId) {
+async function showLeaderboard(bot, chatId, msgId) {
   const topCollectors = db.getTopCollectors(5);
   const topBattlers = db.getTopBattlers(5);
 
@@ -89,10 +88,11 @@ async function showLeaderboard(bot, chatId) {
     text += `${medals[i]} ${name}: \`${u.wins} wins\`\n`;
   });
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] }
-  });
+  const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } };
+  if (msgId) {
+    try { await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, ...opts }); return; } catch {}
+  }
+  await bot.sendMessage(chatId, text, opts);
 }
 
 module.exports = { handleCallbackQuery };

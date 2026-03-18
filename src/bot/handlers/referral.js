@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const BOT_USERNAME = process.env.BOT_USERNAME || 'YellowCatzBot';
 
-async function showReferralMenu(bot, chatId, telegramId) {
+async function showReferralMenu(bot, chatId, telegramId, msgId) {
   const user = db.getUser(telegramId);
   if (!user) return;
 
@@ -24,15 +24,18 @@ async function showReferralMenu(bot, chatId, telegramId) {
     `\`${refLink}\`\n\n` +
     `_Share this link with friends. When they join and collect for the first time, you earn the bonus!_ 🐾`;
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+  const opts = {
     reply_markup: {
       inline_keyboard: [
         [{ text: '📤 Share Link', switch_inline_query: `Join me on YellowCatz! Use my link: ${refLink}` }],
         [{ text: '🏠 Back', callback_data: 'back_main' }]
       ]
     }
-  });
+  };
+  if (msgId) {
+    try { return await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts }); } catch {}
+  }
+  await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
 }
 
 module.exports = { showReferralMenu };

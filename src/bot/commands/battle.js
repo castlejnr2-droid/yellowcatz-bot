@@ -48,7 +48,14 @@ async function handleBattleCommand(bot, msg, args) {
   );
 }
 
-async function showBattleMenu(bot, chatId, telegramId) {
+async function editOrSend(bot, chatId, msgId, text, opts = {}) {
+  if (msgId) {
+    try { return await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts }); } catch {}
+  }
+  return await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
+}
+
+async function showBattleMenu(bot, chatId, telegramId, msgId) {
   const battles = db.getOpenBattles(telegramId);
   const stats = db.getBattleStats(telegramId);
 
@@ -76,10 +83,7 @@ async function showBattleMenu(bot, chatId, telegramId) {
   keyboard.push([{ text: '📜 My Battle History', callback_data: 'battle_history' }]);
   keyboard.push([{ text: '🏠 Back', callback_data: 'back_main' }]);
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: keyboard }
-  });
+  await editOrSend(bot, chatId, msgId, text, { reply_markup: { inline_keyboard: keyboard } });
 }
 
 async function handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, messageId) {
@@ -137,12 +141,12 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   } catch { /* user blocked bot */ }
 }
 
-async function handleBattleHistory(bot, chatId, telegramId) {
+async function handleBattleHistory(bot, chatId, telegramId, msgId) {
   const battles = db.getUserBattles(telegramId);
   if (battles.length === 0) {
-    return await bot.sendMessage(chatId,
+    return await editOrSend(bot, chatId, msgId,
       `⚔️ *Battle History*\n\n_No battles yet! Use /battle <amount> to start._`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } }
+      { reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } }
     );
   }
 
@@ -156,25 +160,24 @@ async function handleBattleHistory(bot, chatId, telegramId) {
     text += `${emoji} vs @${opponent} — \`${formatBalance(b.wager_amount)} $YellowCatz\` ${won ? 'WON' : 'LOST'}\n`;
   });
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+  await editOrSend(bot, chatId, msgId, text, {
     reply_markup: { inline_keyboard: [[{ text: '⚔️ Battle Arena', callback_data: 'menu_battles' }, { text: '🏠 Home', callback_data: 'back_main' }]] }
   });
 }
 
-async function handleCancelBattle(bot, chatId, telegramId, battleId) {
+async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
   const battle = db.getBattleById(battleId);
   if (!battle || String(battle.challenger_id) !== String(telegramId)) {
-    return await bot.sendMessage(chatId, `❌ You can only cancel your own battles.`);
+    return await editOrSend(bot, chatId, msgId, `❌ You can only cancel your own battles.`);
   }
   const success = db.cancelBattle(battleId);
   if (success) {
-    await bot.sendMessage(chatId,
+    await editOrSend(bot, chatId, msgId,
       `✅ Battle #${battleId} cancelled. Your wager of \`${formatBalance(battle.wager_amount)}\` $YellowCatz has been refunded.`,
-      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Home', callback_data: 'back_main' }]] } }
+      { reply_markup: { inline_keyboard: [[{ text: '🏠 Home', callback_data: 'back_main' }]] } }
     );
   } else {
-    await bot.sendMessage(chatId, `❌ Could not cancel battle — it may have already been accepted.`);
+    await editOrSend(bot, chatId, msgId, `❌ Could not cancel battle — it may have already been accepted.`);
   }
 }
 
