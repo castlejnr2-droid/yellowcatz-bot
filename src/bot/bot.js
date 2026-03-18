@@ -161,7 +161,11 @@ function createBot() {
   });
 
   bot.on('polling_error', (err) => {
-    console.error('Polling error:', err.message);
+    if (!err.message?.includes('ETELEGRAM')) console.error('Polling error:', err.message);
+  });
+
+  bot.on('error', (err) => {
+    console.error('Bot error:', err.message);
   });
 
   console.log('✅ YellowCatz Bot is running!');

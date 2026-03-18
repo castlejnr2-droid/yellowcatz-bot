@@ -91,20 +91,20 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const battle = db.getBattleById(battleId);
 
   if (!battle || battle.status !== 'open') {
-    return await bot.answerCallbackQuery(null, { text: 'This battle is no longer available!' });
+    return await bot.sendMessage(chatId, `❌ This battle is no longer available!`);
   }
 
   if (String(battle.challenger_id) === String(telegramId)) {
-    return await bot.answerCallbackQuery(null, { text: "You can't battle yourself!" });
+    return await bot.sendMessage(chatId, `🐱 You can't battle yourself!`);
   }
 
   if ((user.gamble_balance || 0) < battle.wager_amount) {
-    return await bot.answerCallbackQuery(null, { text: `You need ${formatBalance(battle.wager_amount)} $YellowCatz to accept!` });
+    return await bot.sendMessage(chatId, `🐱 You need ${formatBalance(battle.wager_amount)} $YellowCatz to accept!`);
   }
 
   const result = db.acceptBattle(battleId, telegramId);
   if (!result) {
-    return await bot.answerCallbackQuery(null, { text: 'Could not accept battle.' });
+    return await bot.sendMessage(chatId, `❌ Could not accept battle.`);
   }
 
   const challengerUser = db.getUser(battle.challenger_id);
