@@ -5,11 +5,34 @@ require('dotenv').config();
 
 const DB_PATH = process.env.DATABASE_URL || './yellowcatz.db';
 let db;
+let rawDbRef;
+let dirty = false;
+let saveTimer = null;
 
 function wrapDb(rawDb) {
-  const save = () => {
+  rawDbRef = rawDb;
+  
+  // Debounced save - writes to disk after 100ms of no activity
+  const scheduleSave = () => {
+    dirty = true;
+    if (!saveTimer) {
+      saveTimer = setTimeout(() => {
+        saveTimer = null;
+        if (dirty) {
+          const data = rawDb.export();
+          fs.writeFileSync(DB_PATH, Buffer.from(data));
+          dirty = false;
+        }
+      }, 100);
+    }
+  };
+
+  // Immediate save
+  const saveNow = () => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     const data = rawDb.export();
     fs.writeFileSync(DB_PATH, Buffer.from(data));
+    dirty = false;
   };
 
   const wrapped = {
@@ -17,53 +40,60 @@ function wrapDb(rawDb) {
       return {
         run(...params) {
           rawDb.run(sql, params);
-          const res = rawDb.exec("SELECT last_insert_rowid()");
-          save();
-          return { lastInsertRowid: res[0]?.values[0]?.[0] };
+          scheduleSave();
+          try {
+            const res = rawDb.exec("SELECT last_insert_rowid()");
+            return { lastInsertRowid: res[0]?.values[0]?.[0] };
+          } catch { return { lastInsertRowid: null }; }
         },
         get(...params) {
           const stmt = rawDb.prepare(sql);
-          if (params.length) stmt.bind(params);
-          if (stmt.step()) {
-            const cols = stmt.getColumnNames();
-            const vals = stmt.get();
+          try {
+            if (params.length) stmt.bind(params);
+            if (stmt.step()) {
+              const cols = stmt.getColumnNames();
+              const vals = stmt.get();
+              stmt.free();
+              const row = {};
+              cols.forEach((c, i) => row[c] = vals[i]);
+              return row;
+            }
             stmt.free();
-            const row = {};
-            cols.forEach((c, i) => row[c] = vals[i]);
-            return row;
-          }
-          stmt.free();
-          return undefined;
+            return undefined;
+          } catch (e) { try { stmt.free(); } catch {} throw e; }
         },
         all(...params) {
           const results = [];
           const stmt = rawDb.prepare(sql);
-          if (params.length) stmt.bind(params);
-          while (stmt.step()) {
-            const cols = stmt.getColumnNames();
-            const vals = stmt.get();
-            const row = {};
-            cols.forEach((c, i) => row[c] = vals[i]);
-            results.push(row);
-          }
-          stmt.free();
-          return results;
+          try {
+            if (params.length) stmt.bind(params);
+            while (stmt.step()) {
+              const cols = stmt.getColumnNames();
+              const vals = stmt.get();
+              const row = {};
+              cols.forEach((c, i) => row[c] = vals[i]);
+              results.push(row);
+            }
+            stmt.free();
+            return results;
+          } catch (e) { try { stmt.free(); } catch {} throw e; }
         }
       };
     },
     exec(sql) {
       rawDb.exec(sql);
-      save();
+      saveNow();
     },
     pragma() {},
-    // Simple transaction: just run the function, no BEGIN/COMMIT needed for SQLite single-connection
     transaction(fn) {
       return (...args) => {
         const result = fn(...args);
-        save();
+        // Force immediate save after transaction
+        saveNow();
         return result;
       };
-    }
+    },
+    saveNow
   };
   return wrapped;
 }

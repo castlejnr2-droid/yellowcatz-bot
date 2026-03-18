@@ -67,6 +67,7 @@ async function handleStart(bot, msg, referralCode) {
   }
 
   const user = db.getOrCreateUser({ telegramId, username, firstName, referredBy });
+  console.log(`[START] User ${telegramId} balance:`, JSON.stringify({gamble: user?.gamble_balance, spot: user?.spot_balance}));
 
   await bot.sendMessage(chatId, getPortfolioText(user), {
     parse_mode: 'Markdown',

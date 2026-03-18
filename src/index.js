@@ -1,4 +1,6 @@
 require('dotenv').config();
+process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.message); });
+process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
 const { createBot } = require('./bot/bot');
 const { createServer } = require('./server/index');
 const { getDbAsync } = require('./db/index');

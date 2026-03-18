@@ -73,6 +73,7 @@ async function handleCollect(bot, msg) {
   }
 
   const refreshedUser = db.getUser(telegramId);
+  console.log(`[COLLECT] After update, user ${telegramId} balance:`, JSON.stringify({gamble: refreshedUser?.gamble_balance, spot: refreshedUser?.spot_balance}));
   const newBalance = Number(refreshedUser.gamble_balance || 0);
 
   const catEmojis = ['🐱', '😺', '😸', '🐾', '🌟', '💛', '✨'];
