@@ -42,7 +42,15 @@ async function handleCollect(bot, msg) {
   }
 
   const amount = randomCollectAmount();
-  db.recordCollection(telegramId, amount);
+  console.log(`[COLLECT] User ${telegramId} collecting ${amount} tokens...`);
+  try {
+    db.recordCollection(telegramId, amount);
+    console.log(`[COLLECT] recordCollection done for ${telegramId}`);
+  } catch (err) {
+    console.error(`[COLLECT] ERROR:`, err.message);
+    await bot.sendMessage(chatId, `❌ Error collecting tokens. Please try again.`);
+    return;
+  }
 
   // Handle first-collect referral bonus
   const collections = db.getUserCollections(telegramId);

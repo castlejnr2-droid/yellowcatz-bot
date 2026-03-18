@@ -34,21 +34,14 @@ async function handleBattleCommand(bot, msg, args) {
   }
 
   const battleId = db.createBattle(telegramId, amount);
+  const displayName = username ? `@${username}` : firstName || 'Someone';
 
   await bot.sendMessage(chatId,
-    `⚔️ *Battle Created!*\n\n` +
-    `🎯 Battle ID: \`#${battleId}\`\n` +
-    `💰 Wager: \`${formatBalance(amount)} $YellowCatz\`\n` +
-    `🏆 Pot: \`${formatBalance(amount * 2)} $YellowCatz\`\n\n` +
-    `Waiting for an opponent... 🐱\n` +
-    `Share your challenge or wait for someone to accept!`,
+    `⚔️ ${displayName} has challenged someone to PvP for ${formatBalance(amount)} $YellowCatz!\nClick the button below to accept.`,
     {
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '⚔️ Open Battles', callback_data: 'battle_list' }],
-          [{ text: '❌ Cancel Battle', callback_data: `battle_cancel_${battleId}` }],
-          [{ text: '🏠 Main Menu', callback_data: 'back_main' }]
+          [{ text: '⚔️ Accept Challenge', callback_data: `battle_accept_${battleId}` }]
         ]
       }
     }
@@ -89,69 +82,57 @@ async function showBattleMenu(bot, chatId, telegramId) {
   });
 }
 
-async function handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId) {
+async function handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, messageId) {
   const user = db.getOrCreateUser({ telegramId, username, firstName });
   const battle = db.getBattleById(battleId);
 
   if (!battle || battle.status !== 'open') {
-    return await bot.sendMessage(chatId, `❌ This battle is no longer available!`, { parse_mode: 'Markdown' });
+    return await bot.answerCallbackQuery(null, { text: 'This battle is no longer available!' });
   }
 
   if (String(battle.challenger_id) === String(telegramId)) {
-    return await bot.sendMessage(chatId, `🐱 You can't battle yourself!`, { parse_mode: 'Markdown' });
+    return await bot.answerCallbackQuery(null, { text: "You can't battle yourself!" });
   }
 
   if ((user.gamble_balance || 0) < battle.wager_amount) {
-    return await bot.sendMessage(chatId,
-      `🐱 *Insufficient Balance!*\n\nYou need \`${formatBalance(battle.wager_amount)}\` $YellowCatz to accept this battle.`,
-      { parse_mode: 'Markdown' }
-    );
+    return await bot.answerCallbackQuery(null, { text: `You need ${formatBalance(battle.wager_amount)} $YellowCatz to accept!` });
   }
 
   const result = db.acceptBattle(battleId, telegramId);
   if (!result) {
-    return await bot.sendMessage(chatId, `❌ Could not accept battle. It may have been cancelled.`);
+    return await bot.answerCallbackQuery(null, { text: 'Could not accept battle.' });
   }
 
-  const winnerName = result.winner_id === String(telegramId)
-    ? (firstName || username || 'You')
-    : 'Your opponent';
-  const isWinner = result.winner_id === String(telegramId);
-  const pot = battle.wager_amount * 2;
-
-  const battleResultText = (isWin, roll1, roll2, wager, challengerName, opponentName) =>
-    `⚔️ *Battle Result!*\n\n` +
-    `🎲 *${challengerName}*: Rolled \`${roll1}\`\n` +
-    `🎲 *${opponentName}*: Rolled \`${roll2}\`\n\n` +
-    `${isWin ? '🏆 *YOU WIN!*' : '💀 *You lost...*'}\n` +
-    `${isWin ? `💰 +${formatBalance(pot)} $YellowCatz to your Gamble Balance!` : `💸 -${formatBalance(wager)} $YellowCatz`}`;
-
   const challengerUser = db.getUser(battle.challenger_id);
-  const challengerName = challengerUser?.username || challengerUser?.first_name || 'Opponent';
-  const opponentName = firstName || username || 'Challenger';
+  const challengerName = challengerUser?.username ? `@${challengerUser.username}` : (challengerUser?.first_name || 'Player 1');
+  const opponentName = username ? `@${username}` : (firstName || 'Player 2');
+  const winnerName = result.winner_id === String(telegramId) ? opponentName : challengerName;
+  const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
+  const pot = battle.wager_amount;
 
-  // Notify acceptor
-  await bot.sendMessage(chatId,
-    battleResultText(isWinner, result.challenger_roll, result.opponent_roll, battle.wager_amount, challengerName, opponentName),
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [[{ text: '⚔️ Battle Again', callback_data: 'menu_battles' }, { text: '🏠 Home', callback_data: 'back_main' }]] }
+  // Edit the original challenge message to show result
+  const resultText = `⚔️ PvP Battle Result!\n\n` +
+    `🏆 ${winnerName} won ${formatBalance(pot)} $YellowCatz!\n` +
+    `💀 ${loserName} lost ${formatBalance(pot)} $YellowCatz!`;
+
+  if (messageId) {
+    try {
+      await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId });
+    } catch {
+      await bot.sendMessage(chatId, resultText);
     }
-  );
+  } else {
+    await bot.sendMessage(chatId, resultText);
+  }
 
-  // Notify challenger
+  // DM the challenger about the result
   const challengerWon = result.winner_id === String(battle.challenger_id);
   try {
     await bot.sendMessage(battle.challenger_id,
-      `⚔️ *Your Battle Result!*\n\n` +
-      `🐱 *${opponentName}* accepted your battle!\n\n` +
-      `🎲 *Your roll*: \`${result.challenger_roll}\`\n` +
-      `🎲 *Their roll*: \`${result.opponent_roll}\`\n\n` +
-      `${challengerWon ? `🏆 *YOU WIN! +${formatBalance(pot)} $YellowCatz*` : `💀 *You lost... -${formatBalance(battle.wager_amount)} $YellowCatz*`}`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '⚔️ New Battle', callback_data: 'menu_battles' }]] }
-      }
+      `⚔️ ${opponentName} accepted your PvP challenge!\n\n` +
+      (challengerWon
+        ? `🏆 You won ${formatBalance(pot)} $YellowCatz!`
+        : `💀 You lost ${formatBalance(pot)} $YellowCatz!`)
     );
   } catch { /* user blocked bot */ }
 }

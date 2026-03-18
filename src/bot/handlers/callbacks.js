@@ -58,7 +58,7 @@ async function handleCallbackQuery(bot, query) {
   if (data === 'battle_history') return await handleBattleHistory(bot, chatId, telegramId);
   if (data.startsWith('battle_accept_')) {
     const battleId = parseInt(data.replace('battle_accept_', ''));
-    return await handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId);
+    return await handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, message.message_id);
   }
   if (data.startsWith('battle_cancel_')) {
     const battleId = parseInt(data.replace('battle_cancel_', ''));
