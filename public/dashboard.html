@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — YellowCatz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+.dash-section { padding: 3rem 0 6rem; }
+.lookup-wrap { max-width: 540px; margin: 0 auto 3rem; text-align: center; }
+.lookup-hint { font-size: 0.85rem; color: var(--grey); margin-bottom: 1rem; font-family: var(--font-mono); }
+.balance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem; }
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.dash-panel { background: var(--black-3); border: 1px solid var(--black-5); border-radius: var(--radius-lg); padding: 1.5rem; }
+.dash-panel-title { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grey); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+.user-header { display: flex; align-items: center; gap: 1rem; background: var(--black-3); border: 1px solid rgba(255,215,0,0.2); border-radius: var(--radius-lg); padding: 1.5rem; margin-bottom: 1.5rem; }
+.user-avatar { width: 56px; height: 56px; background: var(--yellow); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
+.user-name { font-size: 1.3rem; font-weight: 700; }
+.user-id { font-family: var(--font-mono); font-size: 0.8rem; color: var(--grey); }
+.user-joined { font-size: 0.8rem; color: var(--grey); }
+.ref-link-box { background: var(--black-4); border: 1px solid var(--black-5); border-radius: var(--radius); padding: 0.85rem 1rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--yellow); word-break: break-all; margin-top: 0.5rem; cursor: pointer; transition: border-color var(--transition); }
+.ref-link-box:hover { border-color: var(--yellow); }
+.copy-hint { font-size: 0.75rem; color: var(--grey); margin-top: 0.5rem; }
+.result-wrap { display: none; }
+.result-wrap.visible { display: block; }
+
+@media (max-width: 768px) {
+  .balance-grid { grid-template-columns: 1fr 1fr; }
+  .dash-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .balance-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <span class="logo-icon">🐱</span>
+      <span class="logo-text">YellowCatz</span>
+      <span class="logo-ticker">$YellowCatz</span>
+    </a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Home</a>
+      <a href="/leaderboard.html" class="nav-link">🏆 Leaderboard</a>
+      <a href="#" class="btn-nav" id="joinBtn">Join Bot</a>
+    </div>
+  </div>
+</nav>
+
+<div class="page-header">
+  <div class="container">
+    <div class="page-title">📊 DASHBOARD</div>
+    <div class="page-sub">Look up any player's stats by their Telegram user ID</div>
+  </div>
+</div>
+
+<section class="dash-section">
+  <div class="container">
+
+    <!-- Lookup -->
+    <div class="lookup-wrap">
+      <div class="lookup-hint">Enter your Telegram user ID to view your stats</div>
+      <div class="input-group">
+        <input type="text" id="userIdInput" class="input-field" placeholder="Telegram User ID (e.g. 123456789)" />
+        <button class="btn-primary" id="lookupBtn" style="flex-shrink:0">Look Up</button>
+      </div>
+      <div id="lookupError" class="alert alert-error" style="display:none"></div>
+    </div>
+
+    <!-- Results -->
+    <div class="result-wrap" id="resultWrap">
+
+      <!-- User Header -->
+      <div class="user-header">
+        <div class="user-avatar">🐱</div>
+        <div>
+          <div class="user-name" id="dUserName">—</div>
+          <div class="user-id" id="dUserId">ID: —</div>
+          <div class="user-joined" id="dUserJoined">Joined: —</div>
+        </div>
+      </div>
+
+      <!-- Balances -->
+      <div class="balance-grid">
+        <div class="card">
+          <div class="card-title">🎰 Gamble Balance</div>
+          <div class="card-val" id="dGamble">0</div>
+          <div class="card-sub">$YellowCatz</div>
+        </div>
+        <div class="card">
+          <div class="card-title">💲 Spot Balance</div>
+          <div class="card-val" id="dSpot">0</div>
+          <div class="card-sub">$YellowCatz</div>
+        </div>
+        <div class="card">
+          <div class="card-title">📊 Total Collected</div>
+          <div class="card-val" id="dTotal">0</div>
+          <div class="card-sub">$YellowCatz ever collected</div>
+        </div>
+      </div>
+
+      <!-- Panels -->
+      <div class="dash-grid">
+
+        <!-- Battles -->
+        <div class="dash-panel">
+          <div class="dash-panel-title">⚔️ Battle Stats</div>
+          <div class="balance-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem">
+            <div class="card" style="padding:1rem">
+              <div class="card-title">Wins</div>
+              <div class="card-val" style="font-size:1.3rem" id="dWins">0</div>
+            </div>
+            <div class="card" style="padding:1rem">
+              <div class="card-title">Losses</div>
+              <div class="card-val" style="font-size:1.3rem;color:var(--red)" id="dLosses">0</div>
+            </div>
+          </div>
+          <div style="font-size:0.85rem;color:var(--grey)">Total Won: <span style="color:var(--yellow);font-family:var(--font-mono)" id="dBattleEarned">0</span> $YellowCatz</div>
+        </div>
+
+        <!-- Referrals -->
+        <div class="dash-panel">
+          <div class="dash-panel-title">👥 Referral Stats</div>
+          <div style="margin-bottom:1rem">
+            <div style="font-size:0.85rem;color:var(--grey);margin-bottom:0.25rem">Total Referrals</div>
+            <div style="font-family:var(--font-mono);font-size:1.5rem;color:var(--yellow)" id="dRefCount">0</div>
+          </div>
+          <div style="margin-bottom:1rem">
+            <div style="font-size:0.85rem;color:var(--grey);margin-bottom:0.25rem">Bonus Earned</div>
+            <div style="font-family:var(--font-mono);font-size:1rem;color:var(--green)" id="dRefEarned">0 $YellowCatz</div>
+          </div>
+          <div>
+            <div style="font-size:0.85rem;color:var(--grey);margin-bottom:0.5rem">Your Referral Link</div>
+            <div class="ref-link-box" id="dRefLink" title="Click to copy">—</div>
+            <div class="copy-hint" id="copyHint">Click link to copy</div>
+          </div>
+        </div>
+
+        <!-- Collections History -->
+        <div class="dash-panel">
+          <div class="dash-panel-title">💰 Recent Collections</div>
+          <div id="dCollections">
+            <div class="empty-state"><div class="empty-icon">💰</div><p>No collections yet</p></div>
+          </div>
+        </div>
+
+        <!-- Withdrawals History -->
+        <div class="dash-panel">
+          <div class="dash-panel-title">🏧 Recent Withdrawals</div>
+          <div id="dWithdrawals">
+            <div class="empty-state"><div class="empty-icon">🏧</div><p>No withdrawals yet</p></div>
+          </div>
+        </div>
+
+      </div><!-- end dash-grid -->
+
+      <!-- Battle History -->
+      <div class="dash-panel" style="margin-top:1.5rem">
+        <div class="dash-panel-title">⚔️ Recent Battles</div>
+        <div class="lb-table-wrap">
+          <table class="data-table" id="dBattleTable">
+            <thead>
+              <tr><th>Result</th><th>Opponent</th><th>Wager</th><th>Your Roll</th><th>Their Roll</th></tr>
+            </thead>
+            <tbody id="dBattleBody">
+              <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--grey)">No battles yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end result-wrap -->
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>© 2024 YellowCatz — <a href="/" style="color:var(--yellow)">Back to Home</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+const BOT_URL = 'https://t.me/YellowCatzBot';
+const BOT_USERNAME = 'YellowCatzBot';
+document.getElementById('joinBtn').href = BOT_URL;
+
+function escHtml(str) {
+  return String(str||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtNum(n) {
+  n = Number(n)||0;
+  if(n>=1_000_000) return (n/1_000_000).toFixed(2)+'M';
+  if(n>=1_000) return (n/1_000).toFixed(1)+'K';
+  return n.toLocaleString('en-US',{maximumFractionDigits:2});
+}
+
+function fmtDate(str) {
+  if (!str) return '—';
+  return new Date(str.endsWith('Z')?str:str+'Z').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
+async function lookup() {
+  const userId = document.getElementById('userIdInput').value.trim();
+  if (!userId) return;
+
+  const errEl = document.getElementById('lookupError');
+  errEl.style.display = 'none';
+  document.getElementById('lookupBtn').textContent = 'Loading...';
+
+  try {
+    const [userRes, colRes, wdRes, btRes] = await Promise.all([
+      fetch(`/api/user/${userId}`),
+      fetch(`/api/user/${userId}/collections`),
+      fetch(`/api/user/${userId}/withdrawals`),
+      fetch(`/api/user/${userId}/battles`)
+    ]);
+
+    if (!userRes.ok) throw new Error('User not found');
+    const { data: user } = await userRes.json();
+    const { data: cols } = await colRes.json();
+    const { data: wds } = await wdRes.json();
+    const { data: bts } = await btRes.json();
+
+    // Show result wrap
+    document.getElementById('resultWrap').classList.add('visible');
+
+    // User header
+    const displayName = user.username ? `@${user.username}` : user.first_name || 'Anonymous';
+    document.getElementById('dUserName').textContent = displayName;
+    document.getElementById('dUserId').textContent = `ID: ${user.telegram_id}`;
+    document.getElementById('dUserJoined').textContent = `Joined: ${fmtDate(user.created_at)}`;
+
+    // Balances
+    document.getElementById('dGamble').textContent = fmtNum(user.gamble_balance);
+    document.getElementById('dSpot').textContent = fmtNum(user.spot_balance);
+    document.getElementById('dTotal').textContent = fmtNum(user.total_collected);
+
+    // Battle stats
+    document.getElementById('dWins').textContent = user.battles.wins;
+    document.getElementById('dLosses').textContent = user.battles.losses;
+    document.getElementById('dBattleEarned').textContent = fmtNum(user.battles.earned);
+
+    // Referral stats
+    document.getElementById('dRefCount').textContent = user.referrals.count;
+    document.getElementById('dRefEarned').textContent = fmtNum(user.referrals.totalEarned) + ' $YellowCatz';
+    const refLink = `https://t.me/${BOT_USERNAME}?start=ref_${user.telegram_id}`;
+    document.getElementById('dRefLink').textContent = refLink;
+
+    // Referral link copy
+    document.getElementById('dRefLink').onclick = () => {
+      navigator.clipboard.writeText(refLink).then(() => {
+        document.getElementById('copyHint').textContent = '✅ Copied!';
+        setTimeout(() => document.getElementById('copyHint').textContent = 'Click link to copy', 2000);
+      });
+    };
+
+    // Collections
+    const colContainer = document.getElementById('dCollections');
+    if (!cols.length) {
+      colContainer.innerHTML = '<div class="empty-state"><div class="empty-icon">💰</div><p>No collections yet</p></div>';
+    } else {
+      colContainer.innerHTML = cols.slice(0,5).map(c => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--black-5)">
+          <span style="font-family:var(--font-mono);color:var(--yellow)">+${fmtNum(c.amount)} $YellowCatz</span>
+          <span style="font-size:0.8rem;color:var(--grey)">${fmtDate(c.collected_at)}</span>
+        </div>
+      `).join('');
+    }
+
+    // Withdrawals
+    const wdContainer = document.getElementById('dWithdrawals');
+    if (!wds.length) {
+      wdContainer.innerHTML = '<div class="empty-state"><div class="empty-icon">🏧</div><p>No withdrawals yet</p></div>';
+    } else {
+      wdContainer.innerHTML = wds.slice(0,5).map(w => {
+        const badgeClass = `badge-${w.status}`;
+        const shortAddr = w.solana_address.slice(0,6)+'...'+w.solana_address.slice(-4);
+        return `
+        <div style="padding:0.75rem 0;border-bottom:1px solid var(--black-5)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem">
+            <span style="font-family:var(--font-mono);color:var(--yellow)">${fmtNum(w.amount)} $YellowCatz</span>
+            <span class="badge ${badgeClass}">${w.status}</span>
+          </div>
+          <div style="font-size:0.75rem;color:var(--grey)">${escHtml(shortAddr)} · ${fmtDate(w.created_at)}</div>
+        </div>`;
+      }).join('');
+    }
+
+    // Battles
+    const btBody = document.getElementById('dBattleBody');
+    if (!bts.length) {
+      btBody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--grey)">No battles yet</td></tr>';
+    } else {
+      btBody.innerHTML = bts.map(b => {
+        const won = b.winner_id === String(userId);
+        const oppName = String(b.challenger_id) === String(userId)
+          ? (b.opponent_name || b.opponent_first || '?')
+          : (b.challenger_name || b.challenger_first || '?');
+        const myRoll = String(b.challenger_id) === String(userId) ? b.challenger_roll : b.opponent_roll;
+        const theirRoll = String(b.challenger_id) === String(userId) ? b.opponent_roll : b.challenger_roll;
+        const badgeClass = won ? 'badge-won' : 'badge-lost';
+        return `<tr>
+          <td><span class="badge ${badgeClass}">${won ? '🏆 WON' : '💀 LOST'}</span></td>
+          <td>${escHtml('@'+oppName)}</td>
+          <td style="font-family:var(--font-mono);color:var(--yellow)">${fmtNum(b.wager_amount)} $YellowCatz</td>
+          <td style="font-family:var(--font-mono)">${myRoll||'—'}</td>
+          <td style="font-family:var(--font-mono)">${theirRoll||'—'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('resultWrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  } catch (err) {
+    errEl.textContent = '❌ ' + err.message;
+    errEl.style.display = 'block';
+    document.getElementById('resultWrap').classList.remove('visible');
+  } finally {
+    document.getElementById('lookupBtn').textContent = 'Look Up';
+  }
+}
+
+document.getElementById('lookupBtn').addEventListener('click', lookup);
+document.getElementById('userIdInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') lookup();
+});
+
+// Auto-load if ?id= in URL
+const urlId = new URLSearchParams(window.location.search).get('id');
+if (urlId) {
+  document.getElementById('userIdInput').value = urlId;
+  lookup();
+}
+</script>
+</body>
+</html>

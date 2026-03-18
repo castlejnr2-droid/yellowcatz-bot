@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YellowCatz — Earn. Battle. Win. | $YellowCatz on Solana</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <span class="logo-icon">🐱</span>
+      <span class="logo-text">YellowCatz</span>
+      <span class="logo-ticker">$YellowCatz</span>
+    </a>
+    <div class="nav-links">
+      <a href="/leaderboard.html" class="nav-link">🏆 Leaderboard</a>
+      <a href="/dashboard.html" class="nav-link">📊 Dashboard</a>
+      <a href="#how-it-works" class="nav-link">How It Works</a>
+      <a href="#" class="btn-nav" id="joinBotBtn">Join Bot</a>
+    </div>
+    <button class="mobile-menu-btn" id="mobileMenuBtn">☰</button>
+  </div>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-bg">
+    <div class="grid-lines"></div>
+    <div class="glow glow-1"></div>
+    <div class="glow glow-2"></div>
+  </div>
+
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="pulse-dot"></span>
+      Live on Solana
+    </div>
+    <h1 class="hero-title">
+      <span class="line-1">EARN.</span>
+      <span class="line-2">BATTLE.</span>
+      <span class="line-3">WIN.</span>
+    </h1>
+    <p class="hero-sub">
+      Collect free <strong>$YellowCatz</strong> tokens every 5 minutes,<br>
+      battle other players, and withdraw real SPL tokens to your Solana wallet.
+    </p>
+    <div class="hero-cta">
+      <a href="#" class="btn-primary" id="heroJoinBtn">
+        <span>🐱 Launch Bot on Telegram</span>
+      </a>
+      <a href="#how-it-works" class="btn-secondary">How It Works ↓</a>
+    </div>
+    <div class="hero-stats" id="heroStats">
+      <div class="stat-pill">
+        <span class="stat-val" id="statUsers">—</span>
+        <span class="stat-label">Players</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val" id="statCollected">—</span>
+        <span class="stat-label">$YellowCatz Distributed</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val" id="statBattles">—</span>
+        <span class="stat-label">Battles Fought</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero-cat-wrap">
+    <div class="hero-cat">
+      <div class="cat-shadow"></div>
+      <svg class="cat-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+        <!-- Cat body -->
+        <ellipse cx="150" cy="200" rx="90" ry="75" fill="#FFD700"/>
+        <!-- Cat head -->
+        <circle cx="150" cy="115" r="70" fill="#FFD700"/>
+        <!-- Ears -->
+        <polygon points="95,65 75,20 120,55" fill="#FFD700"/>
+        <polygon points="205,65 225,20 180,55" fill="#FFD700"/>
+        <!-- Inner ears -->
+        <polygon points="97,62 82,32 116,56" fill="#FF8C00" opacity="0.6"/>
+        <polygon points="203,62 218,32 184,56" fill="#FF8C00" opacity="0.6"/>
+        <!-- Eyes -->
+        <ellipse cx="122" cy="108" rx="16" ry="18" fill="#111"/>
+        <ellipse cx="178" cy="108" rx="16" ry="18" fill="#111"/>
+        <circle cx="126" cy="104" r="5" fill="white"/>
+        <circle cx="182" cy="104" r="5" fill="white"/>
+        <!-- Pupils shine -->
+        <ellipse cx="122" cy="110" rx="6" ry="8" fill="#FFD700" opacity="0.2"/>
+        <ellipse cx="178" cy="110" rx="6" ry="8" fill="#FFD700" opacity="0.2"/>
+        <!-- Nose -->
+        <polygon points="150,128 144,136 156,136" fill="#FF8C00"/>
+        <!-- Mouth -->
+        <path d="M144,136 Q150,144 156,136" stroke="#333" stroke-width="2" fill="none"/>
+        <!-- Whiskers left -->
+        <line x1="80" y1="128" x2="135" y2="132" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <line x1="80" y1="136" x2="135" y2="135" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <line x1="80" y1="144" x2="135" y2="138" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <!-- Whiskers right -->
+        <line x1="220" y1="128" x2="165" y2="132" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <line x1="220" y1="136" x2="165" y2="135" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <line x1="220" y1="144" x2="165" y2="138" stroke="#333" stroke-width="1.5" opacity="0.7"/>
+        <!-- Paws -->
+        <ellipse cx="95" cy="265" rx="30" ry="18" fill="#FFD700"/>
+        <ellipse cx="205" cy="265" rx="30" ry="18" fill="#FFD700"/>
+        <!-- Tail -->
+        <path d="M235,200 Q280,180 275,240 Q270,270 250,260" stroke="#FFD700" stroke-width="22" fill="none" stroke-linecap="round"/>
+        <!-- Coin badge -->
+        <circle cx="215" cy="175" r="22" fill="#FFD700" stroke="#111" stroke-width="3"/>
+        <text x="215" y="181" text-anchor="middle" fill="#111" font-size="14" font-weight="bold" font-family="Arial">$</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="scroll-indicator">
+    <div class="scroll-arrow">↓</div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
+<section class="section how-it-works" id="how-it-works">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-tag">Simple & Fun</span>
+      <h2 class="section-title">How It Works</h2>
+    </div>
+
+    <div class="steps-grid">
+      <div class="step-card" data-step="01">
+        <div class="step-icon">🤖</div>
+        <div class="step-num">01</div>
+        <h3>Join the Bot</h3>
+        <p>Start the @YellowCatzBot on Telegram. Your wallet is created automatically — no seed phrases needed.</p>
+      </div>
+      <div class="step-card" data-step="02">
+        <div class="step-icon">💰</div>
+        <div class="step-num">02</div>
+        <h3>Collect Tokens</h3>
+        <p>Use <code>/collect</code> every 5 minutes to earn 50–1,000 $YellowCatz tokens. Free, always.</p>
+      </div>
+      <div class="step-card" data-step="03">
+        <div class="step-icon">⚔️</div>
+        <div class="step-num">03</div>
+        <h3>Battle & Earn</h3>
+        <p>Challenge other players with <code>/battle &lt;amount&gt;</code>. Win the pot, climb the leaderboard.</p>
+      </div>
+      <div class="step-card" data-step="04">
+        <div class="step-icon">🏧</div>
+        <div class="step-num">04</div>
+        <h3>Withdraw to Wallet</h3>
+        <p>Transfer to Spot balance then withdraw real $YellowCatz SPL tokens straight to your Solana wallet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── TOKEN INFO ── -->
+<section class="section token-section">
+  <div class="container">
+    <div class="token-grid">
+      <div class="token-info">
+        <span class="section-tag">Tokenomics</span>
+        <h2 class="section-title">$YellowCatz Token</h2>
+        <p class="token-desc">$YellowCatz is a Solana SPL token powering the YellowCatz ecosystem. Earn through gameplay, battles, and referrals — then withdraw real tokens to your wallet.</p>
+        <div class="token-features">
+          <div class="token-feat">
+            <span class="feat-icon">⚡</span>
+            <div>
+              <strong>Solana SPL Token</strong>
+              <p>Lightning fast, near-zero fees</p>
+            </div>
+          </div>
+          <div class="token-feat">
+            <span class="feat-icon">🎮</span>
+            <div>
+              <strong>Play-to-Earn</strong>
+              <p>Earn through collecting, battling & referrals</p>
+            </div>
+          </div>
+          <div class="token-feat">
+            <span class="feat-icon">🔓</span>
+            <div>
+              <strong>Real Withdrawals</strong>
+              <p>Min 1,000 $YellowCatz to your Solana wallet</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="token-card">
+        <div class="token-card-header">
+          <span class="token-symbol">$YellowCatz</span>
+          <span class="token-name">Solana SPL</span>
+        </div>
+        <div class="token-card-rows">
+          <div class="token-row">
+            <span>Network</span>
+            <span class="val">Solana</span>
+          </div>
+          <div class="token-row">
+            <span>Type</span>
+            <span class="val">SPL Token</span>
+          </div>
+          <div class="token-row">
+            <span>Earn Rate</span>
+            <span class="val">50–1,000 / collect</span>
+          </div>
+          <div class="token-row">
+            <span>Cooldown</span>
+            <span class="val">5 minutes</span>
+          </div>
+          <div class="token-row">
+            <span>Min Withdrawal</span>
+            <span class="val">1,000 $YellowCatz</span>
+          </div>
+          <div class="token-row">
+            <span>Referral Bonus</span>
+            <span class="val">500 $YellowCatz</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── REFERRAL ── -->
+<section class="section referral-section">
+  <div class="container">
+    <div class="referral-box">
+      <div class="referral-text">
+        <h2>👥 Refer Friends.<br>Earn Together.</h2>
+        <p>Get your unique referral link from the bot. Each friend who joins and collects for the first time earns you <strong>500 $YellowCatz</strong> — instantly to your Gamble Balance.</p>
+        <a href="#" class="btn-primary" id="refJoinBtn">🐱 Get Your Link</a>
+      </div>
+      <div class="referral-visual">
+        <div class="ref-card">
+          <div class="ref-you">You</div>
+          <div class="ref-arrow">→ +500 $YellowCatz</div>
+          <div class="ref-friend">Friend joins</div>
+        </div>
+        <div class="ref-card">
+          <div class="ref-you">Friend</div>
+          <div class="ref-arrow">→ +500 $YellowCatz</div>
+          <div class="ref-friend">Their friend</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── LEADERBOARD PREVIEW ── -->
+<section class="section lb-preview-section">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-tag">Top Players</span>
+      <h2 class="section-title">Leaderboard</h2>
+    </div>
+    <div class="lb-preview" id="lbPreview">
+      <div class="lb-loading">Loading top players...</div>
+    </div>
+    <div style="text-align:center;margin-top:2rem">
+      <a href="/leaderboard.html" class="btn-secondary">View Full Leaderboard →</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="section cta-section">
+  <div class="container">
+    <div class="cta-box">
+      <div class="cta-cat">🐱</div>
+      <h2>Ready to Earn?</h2>
+      <p>Join thousands of players already collecting, battling, and withdrawing $YellowCatz tokens.</p>
+      <a href="#" class="btn-primary btn-large" id="ctaJoinBtn">🚀 Launch YellowCatz Bot</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="footer-logo">🐱 YellowCatz</div>
+        <p>Earn $YellowCatz tokens on Solana through gameplay, battles, and referrals.</p>
+      </div>
+      <div class="footer-links">
+        <h4>Navigate</h4>
+        <a href="/">Home</a>
+        <a href="/leaderboard.html">Leaderboard</a>
+        <a href="/dashboard.html">Dashboard</a>
+      </div>
+      <div class="footer-links">
+        <h4>Community</h4>
+        <a href="#" id="footerBotLink">Telegram Bot</a>
+        <a href="#" id="footerTgGroup">Telegram Group</a>
+        <a href="#" id="footerTwitter">Twitter / X</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2024 YellowCatz. $YellowCatz is a utility token for gameplay purposes.</p>
+    </div>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>

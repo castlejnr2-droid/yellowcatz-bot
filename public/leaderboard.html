@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leaderboard — YellowCatz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+.lb-section { padding: 4rem 0 6rem; }
+.lb-tabs-wrap { margin-bottom: 2rem; }
+.lb-table-wrap { overflow-x: auto; }
+
+.top-three {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.top-card {
+  background: var(--black-3);
+  border: 1px solid var(--black-5);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+.top-card:hover { border-color: rgba(255,215,0,0.3); transform: translateY(-4px); }
+.top-card.rank-1 { border-color: rgba(255,215,0,0.4); background: linear-gradient(135deg, rgba(255,215,0,0.08) 0%, var(--black-3) 100%); }
+.top-card.rank-2 { border-color: rgba(192,192,192,0.3); }
+.top-card.rank-3 { border-color: rgba(205,127,50,0.3); }
+
+.top-medal { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.top-name { font-weight: 700; font-size: 1rem; margin-bottom: 0.25rem; }
+.top-amount { font-family: var(--font-mono); font-size: 0.85rem; color: var(--yellow); }
+.top-sub { font-size: 0.75rem; color: var(--grey); margin-top: 0.25rem; }
+
+@media (max-width: 640px) {
+  .top-three { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <span class="logo-icon">🐱</span>
+      <span class="logo-text">YellowCatz</span>
+      <span class="logo-ticker">$YellowCatz</span>
+    </a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Home</a>
+      <a href="/dashboard.html" class="nav-link">📊 Dashboard</a>
+      <a href="#" class="btn-nav" id="joinBtn">Join Bot</a>
+    </div>
+  </div>
+</nav>
+
+<div class="page-header">
+  <div class="container">
+    <div class="page-title">🏆 LEADERBOARD</div>
+    <div class="page-sub">Top players by collected tokens, battles won, and referrals</div>
+  </div>
+</div>
+
+<section class="lb-section">
+  <div class="container">
+    <div class="lb-tabs-wrap">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="collectors">💰 Top Collectors</button>
+        <button class="tab-btn" data-tab="battlers">⚔️ Top Battlers</button>
+        <button class="tab-btn" data-tab="referrers">👥 Top Referrers</button>
+      </div>
+    </div>
+
+    <!-- Top 3 Podium -->
+    <div class="top-three" id="topThree">
+      <div class="top-card rank-1">
+        <div class="top-medal">🥇</div>
+        <div class="top-name" id="p1name">—</div>
+        <div class="top-amount" id="p1amount">—</div>
+        <div class="top-sub" id="p1sub"></div>
+      </div>
+      <div class="top-card rank-2">
+        <div class="top-medal">🥈</div>
+        <div class="top-name" id="p2name">—</div>
+        <div class="top-amount" id="p2amount">—</div>
+        <div class="top-sub" id="p2sub"></div>
+      </div>
+      <div class="top-card rank-3">
+        <div class="top-medal">🥉</div>
+        <div class="top-name" id="p3name">—</div>
+        <div class="top-amount" id="p3amount">—</div>
+        <div class="top-sub" id="p3sub"></div>
+      </div>
+    </div>
+
+    <!-- Full Table -->
+    <div class="card">
+      <div class="lb-table-wrap">
+        <table class="data-table" id="lbTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Player</th>
+              <th>Amount</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="lbBody">
+            <tr><td colspan="4" style="text-align:center;padding:3rem;color:var(--grey)">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>© 2024 YellowCatz — <a href="/" style="color:var(--yellow)">Back to Home</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>
+const BOT_URL = 'https://t.me/YellowCatzBot';
+document.getElementById('joinBtn').href = BOT_URL;
+
+const medals = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+
+function escHtml(str) {
+  return String(str||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtNum(n) {
+  n = Number(n)||0;
+  if(n>=1_000_000) return (n/1_000_000).toFixed(2)+'M';
+  if(n>=1_000) return (n/1_000).toFixed(1)+'K';
+  return n.toLocaleString('en-US',{maximumFractionDigits:0});
+}
+
+function getName(u) {
+  return u.username ? '@'+u.username : u.first_name || 'Anonymous';
+}
+
+let currentData = null;
+
+async function loadLeaderboard() {
+  try {
+    const res = await fetch('/api/leaderboard');
+    const { data } = await res.json();
+    currentData = data;
+    renderTab('collectors');
+  } catch {
+    document.getElementById('lbBody').innerHTML = 
+      '<tr><td colspan="4" style="text-align:center;padding:3rem;color:var(--grey)">Could not load data.</td></tr>';
+  }
+}
+
+function renderTab(tab) {
+  const data = currentData;
+  if (!data) return;
+
+  let rows, podiumKey, amountKey, subKey, subLabel;
+
+  if (tab === 'collectors') {
+    rows = data.collectors;
+    amountKey = 'total_collected';
+    subKey = 'collect_count';
+    subLabel = 'collects';
+  } else if (tab === 'battlers') {
+    rows = data.battlers;
+    amountKey = 'wins';
+    subKey = 'total_won';
+    subLabel = '$YellowCatz won';
+  } else {
+    rows = data.referrers;
+    amountKey = 'referral_count';
+    subKey = 'total_bonus';
+    subLabel = '$YellowCatz bonus';
+  }
+
+  // Podium
+  const ids = ['p1','p2','p3'];
+  rows.slice(0,3).forEach((u,i) => {
+    document.getElementById(ids[i]+'name').textContent = getName(u);
+    const val = Number(u[amountKey]||0);
+    document.getElementById(ids[i]+'amount').textContent = 
+      tab === 'battlers' ? val + ' wins' : fmtNum(val) + (tab==='collectors' ? ' $YellowCatz' : ' refs');
+    document.getElementById(ids[i]+'sub').textContent = 
+      fmtNum(Number(u[subKey]||0)) + ' ' + subLabel;
+  });
+
+  // Table
+  if (!rows.length) {
+    document.getElementById('lbBody').innerHTML = 
+      '<tr><td colspan="4" style="text-align:center;padding:3rem;color:var(--grey)">No data yet!</td></tr>';
+    return;
+  }
+
+  const colLabel = tab==='collectors' ? 'Total $YellowCatz' : tab==='battlers' ? 'Wins' : 'Referrals';
+  document.querySelector('#lbTable thead tr').innerHTML = `<th>#</th><th>Player</th><th>${colLabel}</th><th>Details</th>`;
+
+  document.getElementById('lbBody').innerHTML = rows.map((u,i) => {
+    const val = Number(u[amountKey]||0);
+    const sub = Number(u[subKey]||0);
+    const mainVal = tab==='battlers' ? val+' wins' : fmtNum(val)+(tab==='collectors'?' $YellowCatz':' referrals');
+    const subVal = tab==='battlers' ? fmtNum(sub)+' $YellowCatz earned' : fmtNum(sub)+' '+subLabel;
+    return `<tr>
+      <td style="font-family:var(--font-display);font-size:1.2rem;color:var(--grey)">${medals[i]||i+1}</td>
+      <td style="font-weight:600">${escHtml(getName(u))}</td>
+      <td style="font-family:var(--font-mono);color:var(--yellow)">${escHtml(mainVal)}</td>
+      <td style="color:var(--grey);font-size:0.85rem">${escHtml(subVal)}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTab(btn.dataset.tab);
+  });
+});
+
+loadLeaderboard();
+</script>
+</body>
+</html>

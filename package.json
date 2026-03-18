@@ -1,0 +1,26 @@
+{
+  "name": "yellowcatz-bot",
+  "version": "1.0.0",
+  "description": "YellowCatz ($YellowCatz) Telegram Bot + Website",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.6",
+    "@solana/web3.js": "^1.95.3",
+    "sql.js": "^1.10.3",
+    "bs58": "^5.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
