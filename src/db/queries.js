@@ -307,25 +307,35 @@ async function getUserByReferralCode(code) {
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
 
 async function getTopCollectors(limit = 10) {
-  const res = await query(`
-    SELECT u.telegram_id, u.username, u.first_name,
-      SUM(c.amount) as total_collected, COUNT(c.id) as collect_count
-    FROM collections c JOIN users u ON c.user_id = u.telegram_id
-    GROUP BY u.telegram_id, u.username, u.first_name ORDER BY total_collected DESC LIMIT $1
-  `, [limit]);
-  return res.rows;
+  try {
+    const res = await query(`
+      SELECT u.telegram_id, u.username, u.first_name,
+        COALESCE(SUM(c.amount), 0) as total_collected, COUNT(c.id) as collect_count
+      FROM collections c JOIN users u ON c.user_id = u.telegram_id
+      GROUP BY u.telegram_id, u.username, u.first_name ORDER BY total_collected DESC LIMIT $1
+    `, [limit]);
+    return res.rows;
+  } catch (err) {
+    console.error('[DB] getTopCollectors error:', err.message);
+    return [];
+  }
 }
 
 async function getTopBattlers(limit = 10) {
-  const res = await query(`
-    SELECT u.telegram_id, u.username, u.first_name,
-      COUNT(b.id) as wins,
-      SUM(b.wager_amount * 2) as total_won
-    FROM battles b JOIN users u ON b.winner_id = u.telegram_id
-    WHERE b.status = 'completed'
-    GROUP BY u.telegram_id, u.username, u.first_name ORDER BY wins DESC LIMIT $1
-  `, [limit]);
-  return res.rows;
+  try {
+    const res = await query(`
+      SELECT u.telegram_id, u.username, u.first_name,
+        COUNT(b.id) as wins,
+        COALESCE(SUM(b.wager_amount * 2), 0) as total_won
+      FROM battles b JOIN users u ON b.winner_id = u.telegram_id
+      WHERE b.status = 'completed' AND b.winner_id IS NOT NULL
+      GROUP BY u.telegram_id, u.username, u.first_name ORDER BY wins DESC LIMIT $1
+    `, [limit]);
+    return res.rows;
+  } catch (err) {
+    console.error('[DB] getTopBattlers error:', err.message);
+    return [];
+  }
 }
 
 async function getTopReferrers(limit = 10) {
