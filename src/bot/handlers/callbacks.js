@@ -69,46 +69,48 @@ async function _handleCallback(bot, query) {
 
 async function showLeaderboard(bot, chatId, msgId) {
   try {
+    console.log('[LEADERBOARD] Fetching data...');
     const topCollectors = await db.getTopCollectors(5);
     const topBattlers = await db.getTopBattlers(5);
+    console.log('[LEADERBOARD] Collectors:', topCollectors.length, 'Battlers:', topBattlers.length);
 
-    let text = `🏆 *Leaderboard*\n\n`;
+    let text = `🏆 Leaderboard\n\n`;
 
-    text += `💰 *Top Collectors:*\n`;
-    if (topCollectors.length === 0) {
-      text += `_No collectors yet!_\n`;
+    text += `💰 Top Collectors:\n`;
+    if (!topCollectors || topCollectors.length === 0) {
+      text += `  No collectors yet!\n`;
     } else {
+      const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
       topCollectors.forEach((u, i) => {
-        const name = u.username ? `@${u.username}` : u.first_name || 'Anonymous';
-        const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
-        text += `${medals[i]} ${name}: \`${formatBalance(u.total_collected)} $YellowCatz\`\n`;
+        const name = u.username || u.first_name || 'Anonymous';
+        text += `${medals[i]} ${name} — ${formatBalance(u.total_collected)} YellowCatz\n`;
       });
     }
 
-    text += `\n⚔️ *Top Battlers:*\n`;
-    if (topBattlers.length === 0) {
-      text += `_No battlers yet!_\n`;
+    text += `\n⚔️ Top Battlers:\n`;
+    if (!topBattlers || topBattlers.length === 0) {
+      text += `  No battlers yet!\n`;
     } else {
+      const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
       topBattlers.forEach((u, i) => {
-        const name = u.username ? `@${u.username}` : u.first_name || 'Anonymous';
-        const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
-        text += `${medals[i]} ${name}: \`${u.wins} wins\`\n`;
+        const name = u.username || u.first_name || 'Anonymous';
+        text += `${medals[i]} ${name} — ${u.wins} wins\n`;
       });
     }
 
-    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } };
+    const kb = { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] };
     if (msgId) {
-      try { await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, ...opts }); return; } catch {}
+      try { await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, reply_markup: kb }); return; } catch (e) { console.error('[LEADERBOARD] Edit failed:', e.message); }
     }
-    await bot.sendMessage(chatId, text, opts);
+    await bot.sendMessage(chatId, text, { reply_markup: kb });
   } catch (err) {
-    console.error('[LEADERBOARD] Error:', err.message);
-    const errorText = `🏆 *Leaderboard*\n\n_Unable to load leaderboard. Please try again later._`;
-    const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } };
+    console.error('[LEADERBOARD] Error:', err.message, err.stack);
+    const kb = { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] };
+    const errorText = `🏆 Leaderboard\n\nUnable to load leaderboard. Please try again later.`;
     if (msgId) {
-      try { await bot.editMessageText(errorText, { chat_id: chatId, message_id: msgId, ...opts }); return; } catch {}
+      try { await bot.editMessageText(errorText, { chat_id: chatId, message_id: msgId, reply_markup: kb }); return; } catch {}
     }
-    await bot.sendMessage(chatId, errorText, opts);
+    await bot.sendMessage(chatId, errorText, { reply_markup: kb });
   }
 }
 
