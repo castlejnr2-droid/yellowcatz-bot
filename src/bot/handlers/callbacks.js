@@ -21,7 +21,9 @@ async function _handleCallback(bot, query) {
   async function edit(text, opts = {}) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts });
-    } catch {
+    } catch (err) {
+      // If message content is identical, Telegram throws "not modified" — just ignore it
+      if (err && err.message && err.message.includes('message is not modified')) return;
       await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
     }
   }
@@ -100,7 +102,7 @@ async function showLeaderboard(bot, chatId, msgId) {
 
     const kb = { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] };
     if (msgId) {
-      try { await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, reply_markup: kb }); return; } catch (e) { console.error('[LEADERBOARD] Edit failed:', e.message); }
+      try { await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, reply_markup: kb }); return; } catch (e) { if (e.message && e.message.includes('message is not modified')) return; console.error('[LEADERBOARD] Edit failed:', e.message); }
     }
     await bot.sendMessage(chatId, text, { reply_markup: kb });
   } catch (err) {

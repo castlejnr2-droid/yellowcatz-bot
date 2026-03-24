@@ -75,22 +75,26 @@ async function handleStart(bot, msg, referralCode) {
   });
 }
 
-async function handleRefresh(bot, chatId, telegramId) {
+async function handleRefresh(bot, chatId, telegramId, msgId) {
   const user = await db.getUser(telegramId);
   if (!user) return;
-  try {
-    await bot.editMessageText(getPortfolioText(user), {
-      chat_id: chatId,
-      message_id: undefined,
-      parse_mode: 'Markdown',
-      reply_markup: getMainMenuKeyboard(chatId)
-    });
-  } catch {
-    await bot.sendMessage(chatId, getPortfolioText(user), {
-      parse_mode: 'Markdown',
-      reply_markup: getMainMenuKeyboard(chatId)
-    });
+  if (msgId) {
+    try {
+      await bot.editMessageText(getPortfolioText(user), {
+        chat_id: chatId,
+        message_id: msgId,
+        parse_mode: 'Markdown',
+        reply_markup: getMainMenuKeyboard(chatId)
+      });
+      return;
+    } catch (err) {
+      if (err && err.message && err.message.includes('message is not modified')) return;
+    }
   }
+  await bot.sendMessage(chatId, getPortfolioText(user), {
+    parse_mode: 'Markdown',
+    reply_markup: getMainMenuKeyboard(chatId)
+  });
 }
 
 module.exports = { handleStart, handleRefresh, getMainMenuKeyboard, getPortfolioText, formatBalance };
