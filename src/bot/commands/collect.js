@@ -2,8 +2,8 @@ const db = require('../../db/queries');
 
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 const MIN_COLLECT = 15;
-const MAX_COLLECT = 150;
-const REFERRAL_BONUS = 500;
+const MAX_COLLECT = 100;
+const REFERRAL_BONUS = 100;
 
 function randomCollectAmount() {
   return Math.floor(Math.random() * (MAX_COLLECT - MIN_COLLECT + 1)) + MIN_COLLECT;
