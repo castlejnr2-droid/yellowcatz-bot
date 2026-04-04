@@ -9,8 +9,7 @@ async function showReferralMenu(bot, chatId, telegramId, msgId) {
   if (!user) return;
 
   const stats = await db.getReferralStats(telegramId);
-  const refLink = `https://t.me/${BOT_USERNAME}?start=${user.referral_code}`;
-
+const refLink = https://t.me/${BOT_USERNAME.replace(/^@/, '')}?start=${user.referral_code};
   const text =
     `👥 *Referral Program*\n\n` +
     `🐱 Invite friends and earn *100 $YellowCatz* for each one!\n\n` +
