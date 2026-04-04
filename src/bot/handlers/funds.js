@@ -1,5 +1,6 @@
 const db = require('../../db/queries');
 const { validateSolanaAddress } = require('../../solana/withdraw');
+const { getOrCreateUserDepositATA } = require('../../solana/depositPoller');
 const { formatBalance } = require('../commands/start');
 
 const MIN_WITHDRAW = 1000;
@@ -12,8 +13,9 @@ function clearState(telegramId) { userStates.delete(String(telegramId)); }
 function getFundsKeyboard() {
   return {
     inline_keyboard: [
+      [{ text: '📥 Deposit', callback_data: 'funds_deposit' }, { text: '🐱 Withdraw', callback_data: 'funds_withdraw' }],
       [{ text: '💲 To Spot', callback_data: 'funds_to_spot' }, { text: '🎰 To Gamble', callback_data: 'funds_to_gamble' }],
-      [{ text: '🐱 Withdraw', callback_data: 'funds_withdraw' }, { text: '📒 History', callback_data: 'funds_history' }],
+      [{ text: '📒 History', callback_data: 'funds_history' }],
       [{ text: '🐾 Back', callback_data: 'back_main' }]
     ]
   };
@@ -176,4 +178,25 @@ async function confirmWithdrawal(bot, chatId, telegramId, msgId) {
   }
 }
 
-module.exports = { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, handleTextInput, confirmWithdrawal, clearState };
+async function handleDeposit(bot, chatId, telegramId, msgId) {
+  try {
+    await editOrSend(bot, chatId, msgId, `⏳ Generating your personal deposit address...`);
+    
+    const depositATA = await getOrCreateUserDepositATA(telegramId);
+    
+    await editOrSend(bot, chatId, msgId,
+      `✅ *Your Personal Deposit Address for $YellowCatz*\n\n` +
+      `Send any amount of $YellowCatz to:\n\n` +
+      `\`${depositATA}\`\n\n` +
+      `Tokens will be automatically credited to your 💲 Spot balance in 5-30 seconds.\n\n` +
+      `_No memo, no extra commands, no signature needed!_`,
+      { reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] } });
+  } catch (err) {
+    console.error('[Deposit] Error generating address:', err.message);
+    await editOrSend(bot, chatId, msgId,
+      `❌ Failed to generate deposit address. Please try again later.`,
+      { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } });
+  }
+}
+
+module.exports = { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, handleTextInput, confirmWithdrawal, handleDeposit, clearState };

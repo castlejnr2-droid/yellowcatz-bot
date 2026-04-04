@@ -3,8 +3,9 @@ const { handleStart } = require('./commands/start');
 const { handleCollect } = require('./commands/collect');
 const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
-const { handleTextInput } = require('./handlers/funds');
+const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
+const { startDepositPoller } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { formatBalance } = require('./commands/start');
 
@@ -29,6 +30,11 @@ function createBot() {
     await handleCollect(bot, msg);
   });
 
+  // ── /deposit ──
+  bot.onText(/\/deposit/, async (msg) => {
+    await handleDeposit(bot, msg.chat.id, msg.from.id, null);
+  });
+
   // ── /battle or /PvP ──
   bot.onText(/\/(?:battle|[Pp][Vv][Pp])(?:\s+(.+))?/, async (msg, match) => {
     const args = match[1] ? match[1].trim().split(/\s+/) : [];
@@ -42,6 +48,7 @@ function createBot() {
       `*Commands:*\n` +
       `▸ /start — View portfolio & main menu\n` +
       `▸ /collect — Claim free $YellowCatz (5m cooldown)\n` +
+      `▸ /deposit — Get your personal deposit address\n` +
       `▸ /battle <amount> — Create a battle\n` +
       `▸ /help — Show this message\n\n` +
       `*Balances:*\n` +
@@ -167,6 +174,9 @@ function createBot() {
   bot.on('error', (err) => {
     console.error('Bot error:', err.message);
   });
+
+  // Start deposit poller
+  startDepositPoller(bot);
 
   console.log('✅ YellowCatz Bot is running!');
   return bot;

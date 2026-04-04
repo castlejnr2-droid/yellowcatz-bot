@@ -1,5 +1,5 @@
 const { getMainMenuKeyboard, getPortfolioText } = require('../commands/start');
-const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, confirmWithdrawal, clearState } = require('./funds');
+const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, confirmWithdrawal, handleDeposit, clearState } = require('./funds');
 const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
 const db = require('../../db/queries');
@@ -41,6 +41,7 @@ async function _handleCallback(bot, query) {
   }
   if (data === 'funds_to_spot') return await handleToSpot(bot, chatId, telegramId, msgId);
   if (data === 'funds_to_gamble') return await handleToGamble(bot, chatId, telegramId, msgId);
+  if (data === 'funds_deposit') return await handleDeposit(bot, chatId, telegramId, msgId);
   if (data === 'funds_withdraw') return await handleWithdrawStart(bot, chatId, telegramId, msgId);
   if (data === 'funds_history') return await showWithdrawalHistory(bot, chatId, telegramId, msgId);
   if (data === 'funds_cancel') {

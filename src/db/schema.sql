@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS referrals (
   credited_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Deposits (on-chain SPL token deposits)
+CREATE TABLE IF NOT EXISTS deposits (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(telegram_id),
+  amount DOUBLE PRECISION NOT NULL,
+  tx_signature TEXT UNIQUE NOT NULL,
+  from_address TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add deposit_ata column to users if not exists
+DO $$ BEGIN
+  ALTER TABLE users ADD COLUMN deposit_ata TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
@@ -70,3 +86,5 @@ CREATE INDEX IF NOT EXISTS idx_collections_user_id ON collections(user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id);
 CREATE INDEX IF NOT EXISTS idx_battles_challenger ON battles(challenger_id);
 CREATE INDEX IF NOT EXISTS idx_battles_status ON battles(status);
+CREATE INDEX IF NOT EXISTS idx_deposits_user_id ON deposits(user_id);
+CREATE INDEX IF NOT EXISTS idx_deposits_tx_signature ON deposits(tx_signature);
