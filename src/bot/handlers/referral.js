@@ -13,7 +13,7 @@ async function showReferralMenu(bot, chatId, telegramId, msgId) {
 
   const text =
     `👥 *Referral Program*\n\n` +
-    `🐱 Invite friends and earn *500 $YellowCatz* for each one!\n\n` +
+    `🐱 Invite friends and earn *100 $YellowCatz* for each one!\n\n` +
     `━━━━━━━━━━━━━━━━━\n` +
     `📊 *Your Stats:*\n` +
     `👥 Total Referrals: \`${stats.count}\`\n` +
