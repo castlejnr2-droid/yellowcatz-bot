@@ -142,6 +142,28 @@ function createBot() {
     await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
 
+  // /reset_mainnet — ONE-TIME reset for mainnet launch (admin only)
+  bot.onText(/\/reset_mainnet/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const { pool } = require('../db');
+      const resetSQL = fs.readFileSync(path.join(__dirname, '../db/reset-for-mainnet.sql'), 'utf8');
+      await pool.query(resetSQL);
+      await bot.sendMessage(msg.chat.id,
+        `✅ *MAINNET RESET COMPLETE*\n\n` +
+        `• All balances → 0\n` +
+        `• All history cleared\n` +
+        `• Deposit ATAs cleared (will regenerate)\n\n` +
+        `🚀 Ready for token launch!`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Reset failed: ${err.message}`);
+    }
+  });
+
   // /stats — admin stats
   bot.onText(/\/stats/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
