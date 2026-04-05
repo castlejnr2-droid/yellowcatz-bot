@@ -178,6 +178,45 @@ function createBot() {
     );
   });
 
+  // /totalclaimed — ranked breakdown of tokens claimed per user (admin only)
+  bot.onText(/\/totalclaimed/, async (msg) => {
+    if (!isAdmin(msg.from.id)) {
+      return await bot.sendMessage(msg.chat.id, `⛔ Not authorized.`);
+    }
+    const rows = await db.getTotalClaimedLeaderboard();
+    const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_claimed), 0);
+
+    let text = `🏆 *Total Claimed Leaderboard*\n\n`;
+    text += `💰 *Grand Total:* \`${formatBalance(grandTotal)}\` $YellowCatz\n\n`;
+
+    const topRows = rows.filter(r => parseFloat(r.total_claimed) > 0);
+    if (topRows.length === 0) {
+      text += `_No claims yet._`;
+    } else {
+      topRows.forEach((r, i) => {
+        const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+        text += `${i + 1}. ${label} — \`${formatBalance(parseFloat(r.total_claimed))}\`\n`;
+      });
+    }
+
+    // Telegram messages max 4096 chars; split if needed
+    if (text.length <= 4096) {
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+    } else {
+      const header = text.slice(0, text.indexOf('\n\n', text.indexOf('Grand Total')) + 2);
+      const lines = text.slice(header.length).split('\n');
+      let chunk = header;
+      for (const line of lines) {
+        if ((chunk + line + '\n').length > 4096) {
+          await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+          chunk = '';
+        }
+        chunk += line + '\n';
+      }
+      if (chunk.trim()) await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+    }
+  });
+
   // ── Callback Queries ──
   bot.on('callback_query', async (query) => {
     await handleCallbackQuery(bot, query);

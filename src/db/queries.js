@@ -349,6 +349,18 @@ async function getTopReferrers(limit = 10) {
   return res.rows;
 }
 
+async function getTotalClaimedLeaderboard() {
+  const res = await query(`
+    SELECT u.telegram_id, u.username, u.first_name,
+      COALESCE(SUM(c.amount), 0) as total_claimed
+    FROM users u
+    LEFT JOIN collections c ON c.user_id = u.telegram_id
+    GROUP BY u.telegram_id, u.username, u.first_name
+    ORDER BY total_claimed DESC
+  `);
+  return res.rows;
+}
+
 async function getStats() {
   const usersRes = await query('SELECT COUNT(*) as c FROM users');
   const collectedRes = await query('SELECT COALESCE(SUM(amount), 0) as s FROM collections');
@@ -370,5 +382,5 @@ module.exports = {
   getWithdrawalById, refundWithdrawal,
   createBattle, getOpenBattles, getBattleById, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
   creditReferral, getReferralStats, getUserByReferralCode,
-  getTopCollectors, getTopBattlers, getTopReferrers, getStats
+  getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getStats
 };
