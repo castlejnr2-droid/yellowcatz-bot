@@ -240,6 +240,9 @@ async function pollDeposits(bot) {
           console.error(`[Deposit] Error polling user ${user.telegram_id}:`, err.message);
         }
       }
+      
+      // Small delay between users to avoid RPC rate limits
+      await new Promise(r => setTimeout(r, 1000));
     }
   } catch (err) {
     console.error('[Deposit] Poller error:', err?.message || err?.toString() || JSON.stringify(err));
@@ -256,7 +259,7 @@ function startDepositPoller(bot) {
     return;
   }
   
-  console.log('[Deposit] Starting deposit poller (every 10 seconds)...');
+  console.log('[Deposit] Starting deposit poller (every 30 seconds)...');
 
   // Ensure deposits table exists
   query(`CREATE TABLE IF NOT EXISTS deposits (
@@ -268,13 +271,11 @@ function startDepositPoller(bot) {
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
   
-  // Initialize ATAs for existing users on startup
-  initAllUserATAs().catch(err => {
-    console.error('[Deposit] Failed to init ATAs:', err.message);
-  });
+  // Don't init all ATAs on startup — create lazily via /deposit command
+  // This avoids hammering the RPC on boot
   
-  // Poll every 10 seconds
-  const interval = setInterval(() => pollDeposits(bot), 10000);
+  // Poll every 30 seconds (less aggressive on free RPC)
+  const interval = setInterval(() => pollDeposits(bot), 30000);
   
   // Return interval so it can be cleared if needed
   return interval;
