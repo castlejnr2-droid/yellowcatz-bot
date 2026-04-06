@@ -164,6 +164,56 @@ function createBot() {
     }
   });
 
+  // /overview — detailed per-user breakdown (admin only)
+  bot.onText(/\/overview/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    try {
+      const rows = await db.getUserBreakdown();
+      if (rows.length === 0) return await bot.sendMessage(msg.chat.id, `📊 No users yet.`);
+
+      const grandClaimed = rows.reduce((s, r) => s + parseFloat(r.total_claimed), 0);
+      const grandDeposited = rows.reduce((s, r) => s + parseFloat(r.total_deposited), 0);
+      const grandWRequested = rows.reduce((s, r) => s + parseFloat(r.total_w_requested), 0);
+      const grandWCompleted = rows.reduce((s, r) => s + parseFloat(r.total_w_completed), 0);
+
+      let header = `📊 *User Overview* (${rows.length} users)\n\n`;
+      header += `💰 Total Claimed: \`${formatBalance(grandClaimed)}\`\n`;
+      header += `📥 Total Deposited: \`${formatBalance(grandDeposited)}\`\n`;
+      header += `📤 Total W/D Requested: \`${formatBalance(grandWRequested)}\`\n`;
+      header += `✅ Total W/D Processed: \`${formatBalance(grandWCompleted)}\`\n`;
+      header += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+      const chunks = [header];
+      let current = header;
+
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+        let entry = `*${i + 1}. ${label}*\n`;
+        entry += `  💰 Claimed: \`${formatBalance(r.total_claimed)}\`\n`;
+        entry += `  📥 Deposited: \`${formatBalance(r.total_deposited)}\`\n`;
+        if (parseFloat(r.total_w_requested) > 0) {
+          entry += `  📤 W/D: \`${formatBalance(r.total_w_requested)}\` (${r.num_w_requested} req)\n`;
+          if (parseInt(r.num_w_completed) > 0) entry += `    ✅ Done: \`${formatBalance(r.total_w_completed)}\` (${r.num_w_completed})\n`;
+          if (parseInt(r.num_w_pending) > 0) entry += `    ⏳ Pending: \`${formatBalance(r.total_w_pending)}\` (${r.num_w_pending})\n`;
+          if (parseInt(r.num_w_failed) > 0) entry += `    ❌ Failed: \`${formatBalance(r.total_w_failed)}\` (${r.num_w_failed})\n`;
+        }
+        entry += `\n`;
+
+        if ((current + entry).length > 4000) {
+          await bot.sendMessage(msg.chat.id, current, { parse_mode: 'Markdown' });
+          current = entry;
+        } else {
+          current += entry;
+        }
+      }
+      if (current.trim()) await bot.sendMessage(msg.chat.id, current, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.error('[Overview] Error:', err.message);
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
   // /stats — admin stats
   bot.onText(/\/stats/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;

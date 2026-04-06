@@ -361,6 +361,44 @@ async function getTotalClaimedLeaderboard() {
   return res.rows;
 }
 
+async function getUserBreakdown() {
+  const res = await query(`
+    SELECT 
+      u.telegram_id, u.username, u.first_name,
+      COALESCE(cl.total_claimed, 0) as total_claimed,
+      COALESCE(dp.total_deposited, 0) as total_deposited,
+      COALESCE(wr.total_requested, 0) as total_w_requested,
+      COALESCE(wr.num_requested, 0) as num_w_requested,
+      COALESCE(wc.total_completed, 0) as total_w_completed,
+      COALESCE(wc.num_completed, 0) as num_w_completed,
+      COALESCE(wp.total_pending, 0) as total_w_pending,
+      COALESCE(wp.num_pending, 0) as num_w_pending,
+      COALESCE(wf.total_failed, 0) as total_w_failed,
+      COALESCE(wf.num_failed, 0) as num_w_failed
+    FROM users u
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_claimed FROM collections GROUP BY user_id
+    ) cl ON cl.user_id = u.telegram_id
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_deposited FROM deposits GROUP BY user_id
+    ) dp ON dp.user_id = u.telegram_id
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_requested, COUNT(*) as num_requested FROM withdrawals GROUP BY user_id
+    ) wr ON wr.user_id = u.telegram_id
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_completed, COUNT(*) as num_completed FROM withdrawals WHERE status = 'completed' GROUP BY user_id
+    ) wc ON wc.user_id = u.telegram_id
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_pending, COUNT(*) as num_pending FROM withdrawals WHERE status = 'pending' GROUP BY user_id
+    ) wp ON wp.user_id = u.telegram_id
+    LEFT JOIN (
+      SELECT user_id, SUM(amount) as total_failed, COUNT(*) as num_failed FROM withdrawals WHERE status = 'failed' GROUP BY user_id
+    ) wf ON wf.user_id = u.telegram_id
+    ORDER BY total_claimed DESC
+  `);
+  return res.rows;
+}
+
 async function getStats() {
   const usersRes = await query('SELECT COUNT(*) as c FROM users');
   const collectedRes = await query('SELECT COALESCE(SUM(amount), 0) as s FROM collections');
@@ -382,5 +420,5 @@ module.exports = {
   getWithdrawalById, refundWithdrawal,
   createBattle, getOpenBattles, getBattleById, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
   creditReferral, getReferralStats, getUserByReferralCode,
-  getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getStats
+  getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getUserBreakdown, getStats
 };
