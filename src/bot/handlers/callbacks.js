@@ -4,6 +4,7 @@ const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
 const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
+const { sendTokens } = require('../../solana/withdraw');
 
 async function handleCallbackQuery(bot, query) {
   try { await _handleCallback(bot, query); } catch (err) { console.error('[CALLBACK ERROR]', err.message); }
@@ -64,6 +65,54 @@ async function _handleCallback(bot, query) {
   if (data.startsWith('battle_cancel_')) {
     const battleId = parseInt(data.replace('battle_cancel_', ''));
     return await handleCancelBattle(bot, chatId, telegramId, battleId, msgId);
+  }
+
+  // ── Admin Approve/Reject Withdrawals ──
+  if (data.startsWith('admin_approve_') || data.startsWith('admin_reject_')) {
+    const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim());
+    if (!admins.includes(String(telegramId))) return;
+
+    const isApprove = data.startsWith('admin_approve_');
+    const wId = parseInt(data.replace(/^admin_(approve|reject)_/, ''));
+    const withdrawal = await db.getWithdrawalById(wId);
+
+    if (!withdrawal) return await edit(`❌ Withdrawal #${wId} not found.`);
+    if (withdrawal.status !== 'pending') return await edit(`❌ #${wId} already ${withdrawal.status}.`);
+
+    if (!isApprove) {
+      await db.refundWithdrawal(withdrawal);
+      await edit(`❌ *Rejected & refunded #${wId}*`);
+      try {
+        await bot.sendMessage(withdrawal.user_id,
+          `❌ *Withdrawal Rejected*\n\nYour \`${formatBalance(withdrawal.amount)}\` $YC has been refunded.`,
+          { parse_mode: 'Markdown' });
+      } catch {}
+      return;
+    }
+
+    await db.updateWithdrawalStatus(wId, 'processing');
+    await edit(`🔄 Processing #${wId}...`);
+
+    try {
+      const txHash = await sendTokens(withdrawal.solana_address, withdrawal.amount);
+      await db.updateWithdrawalStatus(wId, 'completed', txHash);
+      await edit(`✅ *#${wId} completed!*\nTX: \`${txHash}\``);
+      try {
+        await bot.sendMessage(withdrawal.user_id,
+          `✅ *Withdrawal Complete!*\n\nAmount: \`${formatBalance(withdrawal.amount)}\` $YC\nTX: \`${txHash}\``,
+          { parse_mode: 'Markdown' });
+      } catch {}
+    } catch (err) {
+      await db.updateWithdrawalStatus(wId, 'failed', null, err.message);
+      await db.refundWithdrawal(withdrawal);
+      await edit(`❌ *#${wId} failed:* ${err.message}\nBalance refunded.`);
+      try {
+        await bot.sendMessage(withdrawal.user_id,
+          `❌ *Withdrawal Failed*\n\nYour \`${formatBalance(withdrawal.amount)}\` $YC has been refunded.`,
+          { parse_mode: 'Markdown' });
+      } catch {}
+    }
+    return;
   }
 
   // ── Leaderboard ──

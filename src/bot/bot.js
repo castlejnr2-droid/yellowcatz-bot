@@ -164,52 +164,115 @@ function createBot() {
     }
   });
 
-  // /overview — detailed per-user breakdown (admin only)
-  bot.onText(/\/overview/, async (msg) => {
+  // /totaldeposited — per-user deposit ranking (admin only)
+  bot.onText(/\/totaldeposited/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
     try {
-      const rows = await db.getUserBreakdown();
-      if (rows.length === 0) return await bot.sendMessage(msg.chat.id, `📊 No users yet.`);
+      const rows = await db.getDepositLeaderboard();
+      const grand = rows.reduce((s, r) => s + parseFloat(r.total_deposited), 0);
+      const active = rows.filter(r => parseFloat(r.total_deposited) > 0);
 
-      const grandClaimed = rows.reduce((s, r) => s + parseFloat(r.total_claimed), 0);
-      const grandDeposited = rows.reduce((s, r) => s + parseFloat(r.total_deposited), 0);
-      const grandWRequested = rows.reduce((s, r) => s + parseFloat(r.total_w_requested), 0);
-      const grandWCompleted = rows.reduce((s, r) => s + parseFloat(r.total_w_completed), 0);
+      let text = `📥 *Total Deposited Leaderboard*\n\n`;
+      text += `💰 *Grand Total:* \`${formatBalance(grand)}\` $YC\n`;
+      text += `👥 *Depositors:* ${active.length}\n\n`;
 
-      let header = `📊 *User Overview* (${rows.length} users)\n\n`;
-      header += `💰 Total Claimed: \`${formatBalance(grandClaimed)}\`\n`;
-      header += `📥 Total Deposited: \`${formatBalance(grandDeposited)}\`\n`;
-      header += `📤 Total W/D Requested: \`${formatBalance(grandWRequested)}\`\n`;
-      header += `✅ Total W/D Processed: \`${formatBalance(grandWCompleted)}\`\n`;
-      header += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+      if (active.length === 0) {
+        text += `_No deposits yet._`;
+      } else {
+        active.forEach((r, i) => {
+          const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+          text += `${i + 1}. ${label} — \`${formatBalance(r.total_deposited)}\` (${r.num_deposits} tx)\n`;
+        });
+      }
 
-      const chunks = [header];
-      let current = header;
-
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
-        let entry = `*${i + 1}. ${label}*\n`;
-        entry += `  💰 Claimed: \`${formatBalance(r.total_claimed)}\`\n`;
-        entry += `  📥 Deposited: \`${formatBalance(r.total_deposited)}\`\n`;
-        if (parseFloat(r.total_w_requested) > 0) {
-          entry += `  📤 W/D: \`${formatBalance(r.total_w_requested)}\` (${r.num_w_requested} req)\n`;
-          if (parseInt(r.num_w_completed) > 0) entry += `    ✅ Done: \`${formatBalance(r.total_w_completed)}\` (${r.num_w_completed})\n`;
-          if (parseInt(r.num_w_pending) > 0) entry += `    ⏳ Pending: \`${formatBalance(r.total_w_pending)}\` (${r.num_w_pending})\n`;
-          if (parseInt(r.num_w_failed) > 0) entry += `    ❌ Failed: \`${formatBalance(r.total_w_failed)}\` (${r.num_w_failed})\n`;
+      if (text.length <= 4096) {
+        await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+      } else {
+        const lines = text.split('\n');
+        let chunk = '';
+        for (const line of lines) {
+          if ((chunk + line + '\n').length > 4000) {
+            await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+            chunk = '';
+          }
+          chunk += line + '\n';
         }
-        entry += `\n`;
+        if (chunk.trim()) await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
 
-        if ((current + entry).length > 4000) {
-          await bot.sendMessage(msg.chat.id, current, { parse_mode: 'Markdown' });
-          current = entry;
-        } else {
-          current += entry;
+  // /totalwithdrawals — per-user withdrawal breakdown with approve/reject for pending (admin only)
+  bot.onText(/\/totalwithdrawals/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    try {
+      const rows = await db.getWithdrawalBreakdown();
+      const pending = await db.getPendingWithdrawals();
+
+      const grandRequested = rows.reduce((s, r) => s + parseFloat(r.total_requested), 0);
+      const grandCompleted = rows.reduce((s, r) => s + parseFloat(r.total_completed), 0);
+      const grandPending = rows.reduce((s, r) => s + parseFloat(r.total_pending), 0);
+
+      let text = `📤 *Total Withdrawals Breakdown*\n\n`;
+      text += `💰 *Requested:* \`${formatBalance(grandRequested)}\` $YC\n`;
+      text += `✅ *Processed:* \`${formatBalance(grandCompleted)}\` $YC\n`;
+      text += `⏳ *Pending:* \`${formatBalance(grandPending)}\` $YC\n\n`;
+
+      if (rows.length === 0) {
+        text += `_No withdrawals yet._\n`;
+      } else {
+        text += `*Per User (by total requested):*\n\n`;
+        rows.forEach((r, i) => {
+          const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+          text += `*${i + 1}. ${label}*\n`;
+          text += `  Total: \`${formatBalance(r.total_requested)}\` (${r.num_total} req)\n`;
+          if (parseInt(r.num_completed) > 0) text += `  ✅ Done: \`${formatBalance(r.total_completed)}\` (${r.num_completed})\n`;
+          if (parseInt(r.num_pending) > 0) text += `  ⏳ Pending: \`${formatBalance(r.total_pending)}\` (${r.num_pending})\n`;
+          if (parseInt(r.num_failed) > 0) text += `  ❌ Failed: \`${formatBalance(r.total_failed)}\` (${r.num_failed})\n`;
+          text += `\n`;
+        });
+      }
+
+      // Send the breakdown (paginated)
+      if (text.length <= 4096) {
+        await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+      } else {
+        const lines = text.split('\n');
+        let chunk = '';
+        for (const line of lines) {
+          if ((chunk + line + '\n').length > 4000) {
+            await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+            chunk = '';
+          }
+          chunk += line + '\n';
+        }
+        if (chunk.trim()) await bot.sendMessage(msg.chat.id, chunk, { parse_mode: 'Markdown' });
+      }
+
+      // Show pending with approve/reject buttons
+      if (pending.length > 0) {
+        for (const w of pending) {
+          const label = w.username ? `@${w.username}` : (w.first_name || `ID:${w.user_id}`);
+          await bot.sendMessage(msg.chat.id,
+            `⏳ *Pending #${w.id}*\n` +
+            `User: ${label}\n` +
+            `Amount: \`${formatBalance(w.amount)}\` $YC\n` +
+            `Address: \`${w.solana_address}\``,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '✅ Approve', callback_data: `admin_approve_${w.id}` },
+                  { text: '❌ Reject', callback_data: `admin_reject_${w.id}` }
+                ]]
+              }
+            }
+          );
         }
       }
-      if (current.trim()) await bot.sendMessage(msg.chat.id, current, { parse_mode: 'Markdown' });
     } catch (err) {
-      console.error('[Overview] Error:', err.message);
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
     }
   });
