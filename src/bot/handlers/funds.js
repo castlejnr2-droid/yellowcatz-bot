@@ -192,7 +192,8 @@ async function handleDeposit(bot, chatId, telegramId, msgId) {
       `_No memo, no extra commands, no signature needed!_`,
       { reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] } });
   } catch (err) {
-    console.error('[Deposit] Error generating address:', err.message);
+    console.error('[Deposit] Error generating address:', err?.message || err?.toString() || JSON.stringify(err));
+    if (err?.stack) console.error('[Deposit] Stack:', err.stack);
     await editOrSend(bot, chatId, msgId,
       `❌ Failed to generate deposit address. Please try again later.`,
       { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } });

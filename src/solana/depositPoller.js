@@ -47,6 +47,13 @@ async function getOrCreateUserDepositATA(telegramId) {
   const wallet = getHotWallet();
   const mint = getTokenMint();
 
+  // Ensure deposit_ata column exists
+  try {
+    await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_ata TEXT');
+  } catch (e) {
+    // Column might already exist, that's fine
+  }
+
   // Check if user already has a deposit_ata stored
   const res = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
   if (res.rows[0]?.deposit_ata) {
@@ -231,7 +238,8 @@ async function pollDeposits(bot) {
       }
     }
   } catch (err) {
-    console.error('[Deposit] Poller error:', err.message);
+    console.error('[Deposit] Poller error:', err?.message || err?.toString() || JSON.stringify(err));
+    if (err?.stack) console.error('[Deposit] Stack:', err.stack);
   }
 }
 
@@ -245,6 +253,16 @@ function startDepositPoller(bot) {
   }
   
   console.log('[Deposit] Starting deposit poller (every 10 seconds)...');
+
+  // Ensure deposits table exists
+  query(`CREATE TABLE IF NOT EXISTS deposits (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount DOUBLE PRECISION NOT NULL,
+    tx_signature TEXT UNIQUE NOT NULL,
+    from_address TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
   
   // Initialize ATAs for existing users on startup
   initAllUserATAs().catch(err => {
