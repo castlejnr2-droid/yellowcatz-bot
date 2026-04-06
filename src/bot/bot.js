@@ -165,7 +165,7 @@ function createBot() {
   });
 
   // /totaldeposited — per-user deposit ranking (admin only)
-  bot.onText(/\/totaldeposited/, async (msg) => {
+  bot.onText(/\/totaldeposited$/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
     try {
       const rows = await db.getDepositLeaderboard();
@@ -205,7 +205,7 @@ function createBot() {
   });
 
   // /totalwithdrawals — per-user withdrawal breakdown with approve/reject for pending (admin only)
-  bot.onText(/\/totalwithdrawals/, async (msg) => {
+  bot.onText(/\/totalwithdrawals$/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
     try {
       const rows = await db.getWithdrawalBreakdown();
@@ -292,11 +292,17 @@ function createBot() {
   });
 
   // /totalclaimed — ranked breakdown of tokens claimed per user (admin only)
-  bot.onText(/\/totalclaimed/, async (msg) => {
+  bot.onText(/\/totalclaimed$/, async (msg) => {
     if (!isAdmin(msg.from.id)) {
       return await bot.sendMessage(msg.chat.id, `⛔ Not authorized.`);
     }
-    const rows = await db.getTotalClaimedLeaderboard();
+    let rows;
+    try {
+      rows = await db.getTotalClaimedLeaderboard();
+    } catch (err) {
+      console.error('[totalclaimed] DB error:', err.message);
+      return await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
     const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_claimed), 0);
 
     let text = `🏆 *Total Claimed Leaderboard*\n\n`;
