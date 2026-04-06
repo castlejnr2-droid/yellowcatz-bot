@@ -86,7 +86,7 @@ async function showLeaderboard(bot, chatId, msgId) {
       const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
       topCollectors.forEach((u, i) => {
         const name = u.username || u.first_name || 'Anonymous';
-        text += `${medals[i]} ${name} — ${formatBalance(u.total_collected)} YellowCatz\n`;
+        text += `${medals[i]} ${name} — ${formatBalance(u.total_collected)} $YC\n`;
       });
     }
 

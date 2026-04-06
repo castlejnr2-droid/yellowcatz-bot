@@ -31,7 +31,7 @@ async function editOrSend(bot, chatId, msgId, text, opts = {}) {
 async function showFundsMenu(bot, chatId, telegramId, msgId) {
   const user = await db.getUser(telegramId);
   if (!user) return;
-  const text = `🧰 *Manage Funds*\n\n🎰 Gamble Balance: \`${formatBalance(user.gamble_balance)} $YellowCatz\`\n💲 Spot Balance:   \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\nChoose an action:`;
+  const text = `🧰 *Manage Funds*\n\n🎰 Gamble Balance: \`${formatBalance(user.gamble_balance)} $YC\`\n💲 Spot Balance:   \`${formatBalance(user.spot_balance)} $YC\`\n\nChoose an action:`;
   await editOrSend(bot, chatId, msgId, text, { reply_markup: getFundsKeyboard() });
 }
 
@@ -44,7 +44,7 @@ async function handleToSpot(bot, chatId, telegramId, msgId) {
   }
   setState(telegramId, { step: 'transfer_to_spot' });
   await editOrSend(bot, chatId, msgId,
-    `💲 *Transfer to Spot Balance*\n\nGamble Balance: \`${formatBalance(user.gamble_balance)} $YellowCatz\`\n\nEnter amount to transfer (or type \`all\`):`,
+    `💲 *Transfer to Spot Balance*\n\nGamble Balance: \`${formatBalance(user.gamble_balance)} $YC\`\n\nEnter amount to transfer (or type \`all\`):`,
     { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
 }
 
@@ -57,7 +57,7 @@ async function handleToGamble(bot, chatId, telegramId, msgId) {
   }
   setState(telegramId, { step: 'transfer_to_gamble' });
   await editOrSend(bot, chatId, msgId,
-    `🎰 *Transfer to Gamble Balance*\n\nSpot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\nEnter amount to transfer (or type \`all\`):`,
+    `🎰 *Transfer to Gamble Balance*\n\nSpot Balance: \`${formatBalance(user.spot_balance)} $YC\`\n\nEnter amount to transfer (or type \`all\`):`,
     { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
 }
 
@@ -66,12 +66,12 @@ async function handleWithdrawStart(bot, chatId, telegramId, msgId) {
   if (!user) return;
   if ((user.spot_balance || 0) < MIN_WITHDRAW) {
     return await editOrSend(bot, chatId, msgId,
-      `🐱 *Minimum Withdrawal: ${MIN_WITHDRAW.toLocaleString()} $YellowCatz*\n\nYour Spot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\n\nTransfer tokens to your Spot Balance first!`,
+      `🐱 *Minimum Withdrawal: ${MIN_WITHDRAW.toLocaleString()} $YC*\n\nYour Spot Balance: \`${formatBalance(user.spot_balance)} $YC\`\n\nTransfer tokens to your Spot Balance first!`,
       { reply_markup: { inline_keyboard: [[{ text: '🐾 Back', callback_data: 'menu_funds' }]] } });
   }
   setState(telegramId, { step: 'withdraw_amount' });
   await editOrSend(bot, chatId, msgId,
-    `🐱 *Withdraw $YellowCatz*\n\nSpot Balance: \`${formatBalance(user.spot_balance)} $YellowCatz\`\nMinimum: \`${MIN_WITHDRAW.toLocaleString()} $YellowCatz\`\n\nEnter amount to withdraw (or type \`all\`):`,
+    `🐱 *Withdraw $YC*\n\nSpot Balance: \`${formatBalance(user.spot_balance)} $YC\`\nMinimum: \`${MIN_WITHDRAW.toLocaleString()} $YC\`\n\nEnter amount to withdraw (or type \`all\`):`,
     { reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
 }
 
@@ -86,7 +86,7 @@ async function showWithdrawalHistory(bot, chatId, telegramId, msgId) {
     const statusEmoji = { pending: '⏳', processing: '🔄', completed: '✅', failed: '❌' }[w.status] || '❓';
     const date = w.created_at.toISOString().split('T')[0];
     const shortAddr = w.solana_address.slice(0, 8) + '...' + w.solana_address.slice(-6);
-    text += `${statusEmoji} \`${formatBalance(w.amount)}\` $YellowCatz → \`${shortAddr}\`\n   ${w.status.toUpperCase()} — ${date}\n`;
+    text += `${statusEmoji} \`${formatBalance(w.amount)}\` $YC → \`${shortAddr}\`\n   ${w.status.toUpperCase()} — ${date}\n`;
     if (w.tx_hash) text += `   TX: \`${w.tx_hash.slice(0, 12)}...\`\n`;
     text += '\n';
   });
@@ -111,7 +111,7 @@ async function handleTextInput(bot, msg) {
     clearState(telegramId);
     const updated = await db.getUser(telegramId);
     await bot.sendMessage(chatId,
-      `✅ *Transfer Complete!*\n\nMoved \`${formatBalance(amount)}\` $YellowCatz to Spot.\n\n🎰 Gamble: \`${formatBalance(updated.gamble_balance)}\`\n💲 Spot: \`${formatBalance(updated.spot_balance)}\``,
+      `✅ *Transfer Complete!*\n\nMoved \`${formatBalance(amount)}\` $YC to Spot.\n\n🎰 Gamble: \`${formatBalance(updated.gamble_balance)}\`\n💲 Spot: \`${formatBalance(updated.spot_balance)}\``,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] } });
     return true;
   }
@@ -124,7 +124,7 @@ async function handleTextInput(bot, msg) {
     clearState(telegramId);
     const updated = await db.getUser(telegramId);
     await bot.sendMessage(chatId,
-      `✅ *Transfer Complete!*\n\nMoved \`${formatBalance(amount)}\` $YellowCatz to Gamble.\n\n🎰 Gamble: \`${formatBalance(updated.gamble_balance)}\`\n💲 Spot: \`${formatBalance(updated.spot_balance)}\``,
+      `✅ *Transfer Complete!*\n\nMoved \`${formatBalance(amount)}\` $YC to Gamble.\n\n🎰 Gamble: \`${formatBalance(updated.gamble_balance)}\`\n💲 Spot: \`${formatBalance(updated.spot_balance)}\``,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '🐾 Back to Funds', callback_data: 'menu_funds' }]] } });
     return true;
   }
@@ -132,11 +132,11 @@ async function handleTextInput(bot, msg) {
   if (state.step === 'withdraw_amount') {
     const amount = text.toLowerCase() === 'all' ? user.spot_balance : parseFloat(text);
     if (isNaN(amount) || amount <= 0) return await bot.sendMessage(chatId, `❌ Invalid amount.`);
-    if (amount < MIN_WITHDRAW) return await bot.sendMessage(chatId, `❌ Minimum withdrawal is ${MIN_WITHDRAW.toLocaleString()} $YellowCatz.`);
+    if (amount < MIN_WITHDRAW) return await bot.sendMessage(chatId, `❌ Minimum withdrawal is ${MIN_WITHDRAW.toLocaleString()} $YC.`);
     if (amount > user.spot_balance) return await bot.sendMessage(chatId, `❌ Insufficient Spot Balance.`);
     setState(telegramId, { step: 'withdraw_address', amount });
     await bot.sendMessage(chatId,
-      `🐱 *Withdraw ${formatBalance(amount)} $YellowCatz*\n\nNow enter your **Solana wallet address**:`,
+      `🐱 *Withdraw ${formatBalance(amount)} $YC*\n\nNow enter your **Solana wallet address**:`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
     return true;
   }
@@ -147,7 +147,7 @@ async function handleTextInput(bot, msg) {
     if (!valid) return await bot.sendMessage(chatId, `❌ Invalid Solana address.`);
     setState(telegramId, { step: 'withdraw_confirm', amount: state.amount, address });
     await bot.sendMessage(chatId,
-      `🐱 *Confirm Withdrawal*\n\nAmount: \`${formatBalance(state.amount)}\` $YellowCatz\nTo: \`${address}\`\n\n⚠️ Double-check the address!`,
+      `🐱 *Confirm Withdrawal*\n\nAmount: \`${formatBalance(state.amount)}\` $YC\nTo: \`${address}\`\n\n⚠️ Double-check the address!`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: 'withdraw_confirm' }], [{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
     return true;
   }
@@ -165,14 +165,14 @@ async function confirmWithdrawal(bot, chatId, telegramId, msgId) {
   clearState(telegramId);
 
   await editOrSend(bot, chatId, msgId,
-    `✅ *Withdrawal Submitted!*\n\nID: \`#${withdrawalId}\`\nAmount: \`${formatBalance(state.amount)}\` $YellowCatz\nStatus: ⏳ *Pending*`,
+    `✅ *Withdrawal Submitted!*\n\nID: \`#${withdrawalId}\`\nAmount: \`${formatBalance(state.amount)}\` $YC\nStatus: ⏳ *Pending*`,
     { reply_markup: { inline_keyboard: [[{ text: '📒 View History', callback_data: 'funds_history' }, { text: '🏠 Home', callback_data: 'back_main' }]] } });
 
   const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').filter(Boolean);
   for (const adminId of admins) {
     try {
       await bot.sendMessage(adminId,
-        `🆕 *New Withdrawal*\n\nUser: @${user.username || telegramId}\nAmount: \`${formatBalance(state.amount)}\` $YellowCatz\nAddress: \`${state.address}\`\nID: #${withdrawalId}\n\n/approve_${withdrawalId} or /reject_${withdrawalId}`,
+        `🆕 *New Withdrawal*\n\nUser: @${user.username || telegramId}\nAmount: \`${formatBalance(state.amount)}\` $YC\nAddress: \`${state.address}\`\nID: #${withdrawalId}\n\n/approve_${withdrawalId} or /reject_${withdrawalId}`,
         { parse_mode: 'Markdown' });
     } catch {}
   }
@@ -185,8 +185,8 @@ async function handleDeposit(bot, chatId, telegramId, msgId) {
     const depositATA = await getOrCreateUserDepositATA(telegramId);
     
     await editOrSend(bot, chatId, msgId,
-      `✅ *Your Personal Deposit Address for $YellowCatz*\n\n` +
-      `Send any amount of $YellowCatz to:\n\n` +
+      `✅ *Your Personal Deposit Address for $YC*\n\n` +
+      `Send any amount of $YC to:\n\n` +
       `\`${depositATA}\`\n\n` +
       `Tokens will be automatically credited to your 💲 Spot balance in 5-30 seconds.\n\n` +
       `_No memo, no extra commands, no signature needed!_`,

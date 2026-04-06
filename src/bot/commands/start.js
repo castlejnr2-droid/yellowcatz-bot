@@ -34,11 +34,11 @@ function getPortfolioText(user) {
   return (
     `🐱 *Welcome, ${name}!*\n\n` +
     `━━━━━━━━━━━━━━━━━\n` +
-    `💛 *Your $YellowCatz Portfolio*\n` +
+    `💛 *Your $YC Portfolio*\n` +
     `━━━━━━━━━━━━━━━━━\n\n` +
-    `🎰 Gamble Balance:  \`${gamble}\` $YellowCatz\n` +
-    `💲 Spot Balance:    \`${spot}\` $YellowCatz\n` +
-    `📊 Total:           \`${total}\` $YellowCatz\n\n` +
+    `🎰 Gamble Balance:  \`${gamble}\` $YC\n` +
+    `💲 Spot Balance:    \`${spot}\` $YC\n` +
+    `📊 Total:           \`${total}\` $YC\n\n` +
     `━━━━━━━━━━━━━━━━━\n` +
     `💡 _Tip: Use /collect to earn free tokens!_\n` +
     `💡 _Use /battle <amount> to challenge someone!_`

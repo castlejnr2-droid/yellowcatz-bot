@@ -195,7 +195,7 @@ async function pollDeposits(bot) {
             
             await query('COMMIT');
             
-            console.log(`[Deposit] Credited ${depositAmount} $YellowCatz to user ${user.telegram_id} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
+            console.log(`[Deposit] Credited ${depositAmount} $YC to user ${user.telegram_id} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
             
             // Notify user via Telegram
             if (bot) {
@@ -203,7 +203,7 @@ async function pollDeposits(bot) {
                 const shortTx = sigInfo.signature.slice(0, 12) + '...' + sigInfo.signature.slice(-8);
                 await bot.sendMessage(user.telegram_id,
                   `✅ *Deposit Received!*\n\n` +
-                  `Amount: \`${depositAmount.toLocaleString()}\` $YellowCatz\n` +
+                  `Amount: \`${depositAmount.toLocaleString()}\` $YC\n` +
                   `TX: \`${shortTx}\`\n\n` +
                   `Tokens credited to your 💲 Spot Balance!`,
                   { parse_mode: 'Markdown' }

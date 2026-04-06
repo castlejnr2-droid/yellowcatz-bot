@@ -23,14 +23,14 @@ async function handleBattleCommand(bot, msg, args) {
   const amount = parseFloat(args[0]);
   if (isNaN(amount) || amount < MIN_WAGER) {
     return await bot.sendMessage(chatId,
-      `⚔️ *Battle Command*\n\nUsage: \`/battle <amount>\`\nMinimum wager: \`${MIN_WAGER} $YellowCatz\`\n\nExample: \`/battle 100\``,
+      `⚔️ *Battle Command*\n\nUsage: \`/battle <amount>\`\nMinimum wager: \`${MIN_WAGER} $YC\`\n\nExample: \`/battle 100\``,
       { parse_mode: 'Markdown' }
     );
   }
 
   if ((user.gamble_balance || 0) < amount) {
     return await bot.sendMessage(chatId,
-      `🐱 *Insufficient Gamble Balance!*\n\nYou need \`${formatBalance(amount)}\` but only have \`${formatBalance(user.gamble_balance)}\` $YellowCatz.\n\nUse /collect to earn more!`,
+      `🐱 *Insufficient Gamble Balance!*\n\nYou need \`${formatBalance(amount)}\` but only have \`${formatBalance(user.gamble_balance)}\` $YC.\n\nUse /collect to earn more!`,
       { parse_mode: 'Markdown' }
     );
   }
@@ -39,7 +39,7 @@ async function handleBattleCommand(bot, msg, args) {
   const displayName = username ? `@${username}` : firstName || 'Someone';
 
   await bot.sendMessage(chatId,
-    `⚔️ ${displayName} has challenged someone to PvP for ${formatBalance(amount)} $YellowCatz!\nClick the button below to accept.`,
+    `⚔️ ${displayName} has challenged someone to PvP for ${formatBalance(amount)} $YC!\nClick the button below to accept.`,
     {
       reply_markup: {
         inline_keyboard: [
@@ -57,13 +57,13 @@ async function showBattleMenu(bot, chatId, telegramId, msgId) {
   let text = `⚔️ *Battle Arena*\n\n`;
   text += `📊 *Your Stats:*\n`;
   text += `🏆 Wins: \`${stats.wins}\` | 💀 Losses: \`${stats.losses}\`\n`;
-  text += `💰 Total Won: \`${formatBalance(stats.earned)} $YellowCatz\`\n\n`;
+  text += `💰 Total Won: \`${formatBalance(stats.earned)} $YC\`\n\n`;
 
   if (battles.length > 0) {
     text += `🎯 *Open Battles:*\n`;
     battles.forEach(b => {
       const name = b.challenger_name || b.challenger_first || 'Unknown';
-      text += `• #${b.id} — \`${formatBalance(b.wager_amount)} $YellowCatz\` by @${name}\n`;
+      text += `• #${b.id} — \`${formatBalance(b.wager_amount)} $YC\` by @${name}\n`;
     });
     text += `\n_Use the buttons to accept a battle_`;
   } else {
@@ -73,7 +73,7 @@ async function showBattleMenu(bot, chatId, telegramId, msgId) {
   const keyboard = [];
   battles.slice(0, 3).forEach(b => {
     const name = b.challenger_name || b.challenger_first || 'Unknown';
-    keyboard.push([{ text: `⚔️ Accept #${b.id} (${formatBalance(b.wager_amount)} $YellowCatz)`, callback_data: `battle_accept_${b.id}` }]);
+    keyboard.push([{ text: `⚔️ Accept #${b.id} (${formatBalance(b.wager_amount)} $YC)`, callback_data: `battle_accept_${b.id}` }]);
   });
   keyboard.push([{ text: '📜 My Battle History', callback_data: 'battle_history' }]);
   keyboard.push([{ text: '🏠 Back', callback_data: 'back_main' }]);
@@ -94,7 +94,7 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   }
 
   if ((user.gamble_balance || 0) < battle.wager_amount) {
-    return await bot.sendMessage(chatId, `🐱 You need ${formatBalance(battle.wager_amount)} $YellowCatz to accept!`);
+    return await bot.sendMessage(chatId, `🐱 You need ${formatBalance(battle.wager_amount)} $YC to accept!`);
   }
 
   const result = await db.acceptBattle(battleId, telegramId);
@@ -109,7 +109,7 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
   const pot = battle.wager_amount;
 
-  const resultText = `⚔️ PvP Battle Result!\n\n🏆 ${winnerName} won ${formatBalance(pot)} $YellowCatz!\n💀 ${loserName} lost ${formatBalance(pot)} $YellowCatz!`;
+  const resultText = `⚔️ PvP Battle Result!\n\n🏆 ${winnerName} won ${formatBalance(pot)} $YC!\n💀 ${loserName} lost ${formatBalance(pot)} $YC!`;
 
   if (messageId) {
     try { await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId }); }
@@ -122,7 +122,7 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   try {
     await bot.sendMessage(battle.challenger_id,
       `⚔️ ${opponentName} accepted your PvP challenge!\n\n` +
-      (challengerWon ? `🏆 You won ${formatBalance(pot)} $YellowCatz!` : `💀 You lost ${formatBalance(pot)} $YellowCatz!`)
+      (challengerWon ? `🏆 You won ${formatBalance(pot)} $YC!` : `💀 You lost ${formatBalance(pot)} $YC!`)
     );
   } catch {}
 }
@@ -142,7 +142,7 @@ async function handleBattleHistory(bot, chatId, telegramId, msgId) {
     const opponent = String(b.challenger_id) === String(telegramId)
       ? (b.opponent_name || b.opponent_first || 'Unknown')
       : (b.challenger_name || b.challenger_first || 'Unknown');
-    text += `${won ? '🏆' : '💀'} vs @${opponent} — \`${formatBalance(b.wager_amount)} $YellowCatz\` ${won ? 'WON' : 'LOST'}\n`;
+    text += `${won ? '🏆' : '💀'} vs @${opponent} — \`${formatBalance(b.wager_amount)} $YC\` ${won ? 'WON' : 'LOST'}\n`;
   });
 
   await editOrSend(bot, chatId, msgId, text, {
@@ -158,7 +158,7 @@ async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
   const success = await db.cancelBattle(battleId);
   if (success) {
     await editOrSend(bot, chatId, msgId,
-      `✅ Battle #${battleId} cancelled. Your wager of \`${formatBalance(battle.wager_amount)}\` $YellowCatz has been refunded.`,
+      `✅ Battle #${battleId} cancelled. Your wager of \`${formatBalance(battle.wager_amount)}\` $YC has been refunded.`,
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Home', callback_data: 'back_main' }]] } }
     );
   } else {

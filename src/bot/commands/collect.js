@@ -34,7 +34,7 @@ async function handleCollect(bot, msg) {
       await bot.sendMessage(chatId,
         `🐱 Patience, little catz!\n\n` +
         `⏰ You can collect again in *${msToMinSec(remaining)}*.\n\n` +
-        `_Come back soon for more $YellowCatz!_ 🐾`,
+        `_Come back soon for more $YC!_ 🐾`,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -64,7 +64,7 @@ async function handleCollect(bot, msg) {
             referrer.telegram_id,
             `🎉 *Referral Bonus!*\n\n` +
             `Your friend *${firstName || username || 'A user'}* just collected for the first time!\n` +
-            `You earned *${REFERRAL_BONUS.toLocaleString()} $YellowCatz* bonus! 🐱💰`,
+            `You earned *${REFERRAL_BONUS.toLocaleString()} $YC* bonus! 🐱💰`,
             { parse_mode: 'Markdown' }
           );
         } catch { /* user may have blocked bot */ }
@@ -81,8 +81,8 @@ async function handleCollect(bot, msg) {
 
   await bot.sendMessage(chatId,
     `${randomCat} *Collect Success!*\n\n` +
-    `💰 You collected *${amount.toLocaleString()} $YellowCatz* tokens!\n\n` +
-    `🎰 Gamble Balance: \`${newBalance.toLocaleString()} $YellowCatz\`\n\n` +
+    `💰 You collected *${amount.toLocaleString()} $YC* tokens!\n\n` +
+    `🎰 Gamble Balance: \`${newBalance.toLocaleString()} $YC\`\n\n` +
     `_Come back in 5 minutes for more!_ ⏰`,
     {
       parse_mode: 'Markdown',

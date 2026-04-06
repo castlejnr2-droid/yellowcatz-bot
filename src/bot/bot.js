@@ -47,7 +47,7 @@ function createBot() {
       `🐱 *YellowCatz Bot Help*\n\n` +
       `*Commands:*\n` +
       `▸ /start — View portfolio & main menu\n` +
-      `▸ /collect — Claim free $YellowCatz (5m cooldown)\n` +
+      `▸ /collect — Claim free $YC (5m cooldown)\n` +
       `▸ /deposit — Get your personal deposit address\n` +
       `▸ /battle <amount> — Create a battle\n` +
       `▸ /help — Show this message\n\n` +
@@ -55,8 +55,8 @@ function createBot() {
       `▸ 🎰 *Gamble* — Used for battles & collects\n` +
       `▸ 💲 *Spot* — Used for withdrawals\n\n` +
       `Transfer between balances via 🧰 Manage Funds.\n` +
-      `Minimum withdrawal: *1,000 $YellowCatz* to Spot.\n\n` +
-      `*Referrals:* Earn *500 $YellowCatz* per friend!\n\n` +
+      `Minimum withdrawal: *1,000 $YC* to Spot.\n\n` +
+      `*Referrals:* Earn *500 $YC* per friend!\n\n` +
       `🌐 Website: ${process.env.BASE_URL || 'coming soon'}`,
       { parse_mode: 'Markdown' }
     );
@@ -88,7 +88,7 @@ function createBot() {
       try {
         await bot.sendMessage(withdrawal.user_id,
           `✅ *Withdrawal Complete!*\n\n` +
-          `Amount: \`${formatBalance(withdrawal.amount)}\` $YellowCatz\n` +
+          `Amount: \`${formatBalance(withdrawal.amount)}\` $YC\n` +
           `TX: \`${txHash}\`\n\n` +
           `Your tokens are on their way! 🐱`,
           { parse_mode: 'Markdown' }
@@ -101,7 +101,7 @@ function createBot() {
       try {
         await bot.sendMessage(withdrawal.user_id,
           `❌ *Withdrawal Failed*\n\n` +
-          `Your \`${formatBalance(withdrawal.amount)}\` $YellowCatz has been refunded to your Spot Balance.\n` +
+          `Your \`${formatBalance(withdrawal.amount)}\` $YC has been refunded to your Spot Balance.\n` +
           `Please try again.`,
           { parse_mode: 'Markdown' }
         );
@@ -120,7 +120,7 @@ function createBot() {
     try {
       await bot.sendMessage(withdrawal.user_id,
         `❌ *Withdrawal Rejected*\n\n` +
-        `Your \`${formatBalance(withdrawal.amount)}\` $YellowCatz has been refunded.\n` +
+        `Your \`${formatBalance(withdrawal.amount)}\` $YC has been refunded.\n` +
         `Contact support if you have questions.`,
         { parse_mode: 'Markdown' }
       );
@@ -134,7 +134,7 @@ function createBot() {
     if (pending.length === 0) return await bot.sendMessage(msg.chat.id, `✅ No pending withdrawals.`);
     let text = `📋 *Pending Withdrawals (${pending.length}):*\n\n`;
     pending.forEach(w => {
-      text += `#${w.id} — \`${formatBalance(w.amount)}\` $YellowCatz\n`;
+      text += `#${w.id} — \`${formatBalance(w.amount)}\` $YC\n`;
       text += `User: @${w.username || w.first_name || w.user_id}\n`;
       text += `Address: \`${w.solana_address.slice(0, 12)}...\`\n`;
       text += `/approve_${w.id} | /reject_${w.id}\n\n`;
@@ -171,9 +171,9 @@ function createBot() {
     await bot.sendMessage(msg.chat.id,
       `📊 *YellowCatz Stats*\n\n` +
       `👥 Users: \`${stats.users}\`\n` +
-      `💰 Total Collected: \`${formatBalance(stats.totalCollected)}\` $YellowCatz\n` +
+      `💰 Total Collected: \`${formatBalance(stats.totalCollected)}\` $YC\n` +
       `⚔️ Total Battles: \`${stats.totalBattles}\`\n` +
-      `🏧 Total Withdrawn: \`${formatBalance(stats.totalWithdrawn)}\` $YellowCatz`,
+      `🏧 Total Withdrawn: \`${formatBalance(stats.totalWithdrawn)}\` $YC`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -187,7 +187,7 @@ function createBot() {
     const grandTotal = rows.reduce((sum, r) => sum + parseFloat(r.total_claimed), 0);
 
     let text = `🏆 *Total Claimed Leaderboard*\n\n`;
-    text += `💰 *Grand Total:* \`${formatBalance(grandTotal)}\` $YellowCatz\n\n`;
+    text += `💰 *Grand Total:* \`${formatBalance(grandTotal)}\` $YC\n\n`;
 
     const topRows = rows.filter(r => parseFloat(r.total_claimed) > 0);
     if (topRows.length === 0) {
