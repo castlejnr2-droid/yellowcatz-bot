@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
-const { getOrCreateAssociatedTokenAccount, getAssociatedTokenAddress, getMint } = require('@solana/spl-token');
+const { getOrCreateAssociatedTokenAccount, getAssociatedTokenAddress, getMint, TOKEN_2022_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { query } = require('../db');
 require('dotenv').config();
@@ -83,7 +83,11 @@ async function getOrCreateUserDepositATA(telegramId) {
     conn,
     wallet,        // payer (hot wallet pays for creation)
     mint,
-    depositKeypair.publicKey  // owner is the unique deposit keypair
+    depositKeypair.publicKey,  // owner is the unique deposit keypair
+    false,
+    'confirmed',
+    undefined,
+    TOKEN_2022_PROGRAM_ID
   );
 
   const ataAddress = ata.address.toBase58();
@@ -122,7 +126,7 @@ async function pollDeposits(bot) {
     
     // Get mint decimals (cache it)
     if (!mintDecimals) {
-      const mintInfo = await getMint(conn, mint);
+      const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
       mintDecimals = mintInfo.decimals;
     }
 

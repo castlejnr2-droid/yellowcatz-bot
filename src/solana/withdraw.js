@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, Transaction } = require('@solana/web3.js');
-const { getOrCreateAssociatedTokenAccount, createTransferInstruction, getMint } = require('@solana/spl-token');
+const { getOrCreateAssociatedTokenAccount, createTransferInstruction, getMint, TOKEN_2022_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 require('dotenv').config();
 
@@ -46,19 +46,19 @@ async function sendTokens(recipientAddress, amount) {
   const mint = getTokenMint();
 
   // Get mint info for decimals
-  const mintInfo = await getMint(conn, mint);
+  const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
   const decimals = mintInfo.decimals;
   const rawAmount = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
   // Get or create sender ATA
   const senderATA = await getOrCreateAssociatedTokenAccount(
-    conn, wallet, mint, wallet.publicKey
+    conn, wallet, mint, wallet.publicKey, false, 'confirmed', undefined, TOKEN_2022_PROGRAM_ID
   );
 
   // Get or create recipient ATA
   const recipientPubkey = new PublicKey(recipientAddress);
   const recipientATA = await getOrCreateAssociatedTokenAccount(
-    conn, wallet, mint, recipientPubkey
+    conn, wallet, mint, recipientPubkey, false, 'confirmed', undefined, TOKEN_2022_PROGRAM_ID
   );
 
   // Build transfer instruction
@@ -66,7 +66,9 @@ async function sendTokens(recipientAddress, amount) {
     senderATA.address,
     recipientATA.address,
     wallet.publicKey,
-    rawAmount
+    rawAmount,
+    [],
+    TOKEN_2022_PROGRAM_ID
   );
 
   // Send transaction
@@ -87,8 +89,8 @@ async function getHotWalletBalance() {
     const conn = getConnection();
     const wallet = getHotWallet();
     const mint = getTokenMint();
-    const ata = await getOrCreateAssociatedTokenAccount(conn, wallet, mint, wallet.publicKey);
-    const mintInfo = await getMint(conn, mint);
+    const ata = await getOrCreateAssociatedTokenAccount(conn, wallet, mint, wallet.publicKey, false, 'confirmed', undefined, TOKEN_2022_PROGRAM_ID);
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
     const balance = Number(ata.amount) / Math.pow(10, mintInfo.decimals);
     return balance;
   } catch (err) {
