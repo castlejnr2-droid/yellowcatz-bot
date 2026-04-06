@@ -1,10 +1,17 @@
-const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
-const { getOrCreateAssociatedTokenAccount, getAssociatedTokenAddress, getMint, TOKEN_2022_PROGRAM_ID } = require('@solana/spl-token');
+const { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } = require('@solana/web3.js');
+const {
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  TOKEN_2022_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAccount,
+  getMint,
+} = require('@solana/spl-token');
 const bs58 = require('bs58');
+const crypto = require('crypto');
 const { query } = require('../db');
 require('dotenv').config();
 
-// Reuse same connection/wallet logic as withdraw.js
 let connection;
 let hotWallet;
 let tokenMint;
@@ -34,87 +41,119 @@ function getTokenMint() {
   return tokenMint;
 }
 
-// Track last processed signature per user ATA to avoid double-crediting
-const lastProcessedSig = new Map();
+/**
+ * Derive a deterministic keypair for a user's deposit wallet.
+ * This keypair "owns" the user's deposit ATA.
+ */
+function getUserDepositKeypair(telegramId) {
+  const wallet = getHotWallet();
+  const hash = crypto.createHash('sha256')
+    .update(Buffer.from(wallet.secretKey))
+    .update(Buffer.from(String(telegramId)))
+    .digest();
+  return Keypair.fromSeed(hash);
+}
 
 /**
- * Create or load a personal deposit ATA for a user.
- * Uses a deterministic seed derived from the user's telegram_id
- * so each user gets a unique ATA owned by the hot wallet.
+ * Get deposit ATA address for a user (offline — no RPC call).
+ * Returns the address string.
  */
-async function getOrCreateUserDepositATA(telegramId) {
+function getUserDepositAddress(telegramId) {
+  const depositKeypair = getUserDepositKeypair(telegramId);
+  const mint = getTokenMint();
+  const ata = getAssociatedTokenAddressSync(
+    mint,
+    depositKeypair.publicKey,
+    false,
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return ata.toBase58();
+}
+
+/**
+ * Ensure the deposit ATA exists on-chain. Creates it if needed.
+ * Called when user runs /deposit.
+ */
+async function ensureDepositATA(telegramId) {
   const conn = getConnection();
   const wallet = getHotWallet();
   const mint = getTokenMint();
+  const depositKeypair = getUserDepositKeypair(telegramId);
 
+  const ataAddress = getAssociatedTokenAddressSync(
+    mint,
+    depositKeypair.publicKey,
+    false,
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  // Check if ATA already exists on-chain
+  try {
+    await getAccount(conn, ataAddress, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    // Already exists
+    return ataAddress.toBase58();
+  } catch (e) {
+    // Doesn't exist — create it
+  }
+
+  console.log(`[Deposit] Creating ATA for user ${telegramId}...`);
+
+  const ix = createAssociatedTokenAccountInstruction(
+    wallet.publicKey,         // payer
+    ataAddress,               // ATA to create
+    depositKeypair.publicKey, // owner
+    mint,                     // mint
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const tx = new Transaction().add(ix);
+  const { blockhash } = await conn.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  const sig = await sendAndConfirmTransaction(conn, tx, [wallet]);
+  console.log(`[Deposit] Created ATA for user ${telegramId}: ${ataAddress.toBase58()} (tx: ${sig})`);
+
+  return ataAddress.toBase58();
+}
+
+/**
+ * Get or create a user's deposit address, storing in DB.
+ * This is the main entry point for /deposit command.
+ */
+async function getOrCreateUserDepositATA(telegramId) {
   // Ensure deposit_ata column exists
   try {
     await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_ata TEXT');
-  } catch (e) {
-    // Column might already exist, that's fine
-  }
+  } catch (e) { /* already exists */ }
 
-  // Check if user already has a deposit_ata stored
+  // Check DB first
   const res = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
   if (res.rows[0]?.deposit_ata) {
     return res.rows[0].deposit_ata;
   }
 
-  // Create a new ATA owned by the hot wallet for this user
-  // We use getOrCreateAssociatedTokenAccount which is deterministic per (owner, mint)
-  // Since all users share the same hot wallet owner, we need a different approach:
-  // We'll generate a unique keypair per user derived from a seed
-  const seed = `yellowcatz-deposit-${telegramId}`;
-  const encoder = new TextEncoder();
-  const seedBytes = encoder.encode(seed);
-  
-  // Create a deterministic keypair for this user's deposit account
-  // Use a hash of (hot wallet secret + telegram_id) as the seed
-  const crypto = require('crypto');
-  const hash = crypto.createHash('sha256')
-    .update(Buffer.from(wallet.secretKey))
-    .update(Buffer.from(String(telegramId)))
-    .digest();
-  
-  const depositKeypair = Keypair.fromSeed(hash);
-  
-  // Get the ATA for this deposit keypair
-  const ata = await getOrCreateAssociatedTokenAccount(
-    conn,
-    wallet,        // payer (hot wallet pays for creation)
-    mint,
-    depositKeypair.publicKey,  // owner is the unique deposit keypair
-    false,
-    'confirmed',
-    undefined,
-    TOKEN_2022_PROGRAM_ID
-  );
-
-  const ataAddress = ata.address.toBase58();
-
-  // Save to database
+  // Derive address (offline) and store in DB
+  const ataAddress = getUserDepositAddress(telegramId);
   await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [ataAddress, String(telegramId)]);
 
-  console.log(`[Deposit] Created ATA for user ${telegramId}: ${ataAddress}`);
+  // Create on-chain (this is the only RPC call)
+  try {
+    await ensureDepositATA(telegramId);
+  } catch (err) {
+    console.error(`[Deposit] Error creating ATA on-chain for ${telegramId}:`, err.message);
+    // Address is still saved — poller will skip if ATA doesn't exist yet
+    // User can retry /deposit later
+  }
+
   return ataAddress;
 }
 
-/**
- * Initialize ATAs for all existing users who don't have one yet
- */
-async function initAllUserATAs() {
-  const res = await query('SELECT telegram_id FROM users WHERE deposit_ata IS NULL');
-  console.log(`[Deposit] Initializing ATAs for ${res.rows.length} users without deposit addresses...`);
-  
-  for (const row of res.rows) {
-    try {
-      await getOrCreateUserDepositATA(row.telegram_id);
-    } catch (err) {
-      console.error(`[Deposit] Failed to create ATA for user ${row.telegram_id}:`, err.message);
-    }
-  }
-  console.log(`[Deposit] ATA initialization complete.`);
-}
+// Track last processed signature per user ATA
+const lastProcessedSig = new Map();
 
 /**
  * Poll for new deposits to all user ATAs
@@ -123,92 +162,100 @@ async function pollDeposits(bot) {
   try {
     const conn = getConnection();
     const mint = getTokenMint();
-    
-    // Get mint decimals (cache it)
+
+    // Cache mint decimals
     if (!mintDecimals) {
-      const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
-      mintDecimals = mintInfo.decimals;
+      try {
+        const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        mintDecimals = mintInfo.decimals;
+      } catch (err) {
+        console.error('[Deposit] Failed to get mint info:', err.message);
+        return; // Can't proceed without decimals
+      }
     }
 
-    // Get all users with deposit ATAs
+    // Only poll users who have deposit ATAs
     const res = await query('SELECT telegram_id, deposit_ata FROM users WHERE deposit_ata IS NOT NULL');
-    
+
     for (const user of res.rows) {
       try {
         const ataPublicKey = new PublicKey(user.deposit_ata);
+
+        // Check if ATA exists on-chain before querying signatures
+        try {
+          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        } catch {
+          // ATA not created yet on-chain — skip
+          continue;
+        }
+
         const lastSig = lastProcessedSig.get(user.deposit_ata);
-        
-        // Fetch recent signatures for this ATA
+
+        // Fetch recent signatures
         const opts = { limit: 5 };
         if (lastSig) opts.until = lastSig;
-        
+
         const signatures = await conn.getSignaturesForAddress(ataPublicKey, opts);
-        
+
         if (signatures.length === 0) continue;
-        
-        // Process from oldest to newest
+
+        // Process oldest to newest
         const toProcess = signatures.reverse();
-        
+
         for (const sigInfo of toProcess) {
-          if (sigInfo.err) continue; // Skip failed transactions
-          
-          // Check if already processed in DB
-          const alreadyProcessed = await query(
-            'SELECT id FROM deposits WHERE tx_signature = $1',
-            [sigInfo.signature]
-          );
-          if (alreadyProcessed.rows.length > 0) continue;
-          
+          if (sigInfo.err) continue;
+
+          // Check if already processed
+          const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
+          if (already.rows.length > 0) continue;
+
           // Fetch full transaction
           const tx = await conn.getTransaction(sigInfo.signature, {
             maxSupportedTransactionVersion: 0,
             commitment: 'confirmed'
           });
-          
+
           if (!tx || !tx.meta) continue;
-          
-          // Parse token balance changes for this ATA
+
+          // Parse token balance changes
           const preBalances = tx.meta.preTokenBalances || [];
           const postBalances = tx.meta.postTokenBalances || [];
-          
-          // Find the post-balance for our ATA
-          const ataIndex = tx.transaction.message.staticAccountKeys
-            ? tx.transaction.message.staticAccountKeys.findIndex(k => k.toBase58() === user.deposit_ata)
-            : tx.transaction.message.accountKeys.findIndex(k => k.toBase58() === user.deposit_ata);
-          
+
+          const accountKeys = tx.transaction.message.staticAccountKeys ||
+                              tx.transaction.message.accountKeys;
+          const ataIndex = accountKeys.findIndex(k => k.toBase58() === user.deposit_ata);
+
           if (ataIndex === -1) continue;
-          
+
           const preBal = preBalances.find(b => b.accountIndex === ataIndex);
           const postBal = postBalances.find(b => b.accountIndex === ataIndex);
-          
+
           if (!postBal) continue;
-          
+
           const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
           const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
           const depositAmount = postAmount - preAmount;
-          
-          if (depositAmount <= 0) continue; // Not a deposit (could be a withdrawal)
-          
-          // Credit the user
+
+          if (depositAmount <= 0) continue;
+
+          // Credit user
           await query('BEGIN');
           try {
-            // Record the deposit
             await query(
               'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
               [user.telegram_id, depositAmount, sigInfo.signature, 'on-chain']
             );
-            
-            // Credit spot balance
+
             await query(
               'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
               [depositAmount, user.telegram_id]
             );
-            
+
             await query('COMMIT');
-            
+
             console.log(`[Deposit] Credited ${depositAmount} $YC to user ${user.telegram_id} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
-            
-            // Notify user via Telegram
+
+            // Notify via Telegram
             if (bot) {
               try {
                 const shortTx = sigInfo.signature.slice(0, 12) + '...' + sigInfo.signature.slice(-8);
@@ -228,24 +275,23 @@ async function pollDeposits(bot) {
             console.error(`[Deposit] Failed to credit user ${user.telegram_id}:`, err.message);
           }
         }
-        
+
         // Update last processed signature
         if (toProcess.length > 0) {
           lastProcessedSig.set(user.deposit_ata, toProcess[toProcess.length - 1].signature);
         }
-        
+
       } catch (err) {
-        // Don't crash the whole poller for one user's error
         if (!err.message?.includes('429')) {
           console.error(`[Deposit] Error polling user ${user.telegram_id}:`, err.message);
         }
       }
-      
-      // Small delay between users to avoid RPC rate limits
-      await new Promise(r => setTimeout(r, 1000));
+
+      // Delay between users to avoid rate limits
+      await new Promise(r => setTimeout(r, 1500));
     }
   } catch (err) {
-    console.error('[Deposit] Poller error:', err?.message || err?.toString() || JSON.stringify(err));
+    console.error('[Deposit] Poller error:', err?.message || err);
     if (err?.stack) console.error('[Deposit] Stack:', err.stack);
   }
 }
@@ -258,7 +304,7 @@ function startDepositPoller(bot) {
     console.log('[Deposit] YELLOWCATZ_TOKEN_MINT not set, skipping deposit poller.');
     return;
   }
-  
+
   console.log('[Deposit] Starting deposit poller (every 30 seconds)...');
 
   // Ensure deposits table exists
@@ -270,14 +316,9 @@ function startDepositPoller(bot) {
     from_address TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
-  
-  // Don't init all ATAs on startup — create lazily via /deposit command
-  // This avoids hammering the RPC on boot
-  
-  // Poll every 30 seconds (less aggressive on free RPC)
+
+  // Poll every 30 seconds
   const interval = setInterval(() => pollDeposits(bot), 30000);
-  
-  // Return interval so it can be cleared if needed
   return interval;
 }
 
