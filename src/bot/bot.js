@@ -11,6 +11,12 @@ const { formatBalance } = require('./commands/start');
 
 require('dotenv').config();
 
+// Escape Telegram Markdown v1 special chars in user-provided text
+function escMd(str) {
+  if (!str) return '';
+  return str.replace(/[_*`\[]/g, '');
+}
+
 function createBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not set!');
@@ -180,7 +186,7 @@ function createBot() {
         text += `_No deposits yet._`;
       } else {
         active.forEach((r, i) => {
-          const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+          const label = r.username ? `@${escMd(r.username)}` : (escMd(r.first_name) || `ID:${r.telegram_id}`);
           text += `${i + 1}. ${label} — \`${formatBalance(r.total_deposited)}\` (${r.num_deposits} tx)\n`;
         });
       }
@@ -225,7 +231,7 @@ function createBot() {
       } else {
         text += `*Per User (by total requested):*\n\n`;
         rows.forEach((r, i) => {
-          const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+          const label = r.username ? `@${escMd(r.username)}` : (escMd(r.first_name) || `ID:${r.telegram_id}`);
           text += `*${i + 1}. ${label}*\n`;
           text += `  Total: \`${formatBalance(r.total_requested)}\` (${r.num_total} req)\n`;
           if (parseInt(r.num_completed) > 0) text += `  ✅ Done: \`${formatBalance(r.total_completed)}\` (${r.num_completed})\n`;
@@ -254,7 +260,7 @@ function createBot() {
       // Show pending with approve/reject buttons
       if (pending.length > 0) {
         for (const w of pending) {
-          const label = w.username ? `@${w.username}` : (w.first_name || `ID:${w.user_id}`);
+          const label = w.username ? `@${escMd(w.username)}` : (escMd(w.first_name) || `ID:${w.user_id}`);
           await bot.sendMessage(msg.chat.id,
             `⏳ *Pending #${w.id}*\n` +
             `User: ${label}\n` +
@@ -313,7 +319,7 @@ function createBot() {
       text += `_No claims yet._`;
     } else {
       topRows.forEach((r, i) => {
-        const label = r.username ? `@${r.username}` : (r.first_name || `ID:${r.telegram_id}`);
+        const label = r.username ? `@${escMd(r.username)}` : (escMd(r.first_name) || `ID:${r.telegram_id}`);
         text += `${i + 1}. ${label} — \`${formatBalance(parseFloat(r.total_claimed))}\`\n`;
       });
     }
