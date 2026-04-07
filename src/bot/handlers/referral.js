@@ -12,7 +12,7 @@ async function showReferralMenu(bot, chatId, telegramId, msgId) {
 const refLink = `https://t.me/${BOT_USERNAME.replace(/^@/, '')}?start=${user.referral_code}`;
   const text =
     `👥 *Referral Program*\n\n` +
-    `🐱 Invite friends and earn *100 $YC* for each one!\n\n` +
+    `🐱 Invite friends and earn *50 $YC* for each one!\n\n` +
     `━━━━━━━━━━━━━━━━━\n` +
     `📊 *Your Stats:*\n` +
     `👥 Total Referrals: \`${stats.count}\`\n` +
