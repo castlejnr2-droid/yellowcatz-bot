@@ -3,6 +3,7 @@ const {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAccount,
   getMint,
@@ -554,4 +555,84 @@ async function findUserByATA(ataAddress) {
   return res.rows[0] || null;
 }
 
-module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll };
+/**
+ * Debug helper: inspect a user's deposit ATA — stored address, re-derived addresses
+ * using both Token-2022 and standard Token programs, and on-chain balances for each.
+ * Returns a plain object safe to render in a Telegram message.
+ */
+async function debugUserDeposit(telegramId) {
+  const conn = getConnection();
+  const errors = [];
+
+  const out = {
+    telegramId: String(telegramId),
+    mintEnvVar: process.env.YELLOWCATZ_TOKEN_MINT || '(NOT SET)',
+    storedAta: null,
+    derivedAta_token2022: null,
+    derivedAta_stdToken: null,
+    storedMatchesToken2022: null,
+    storedMatchesStdToken: null,
+    balance_token2022: null,
+    balance_stdToken: null,
+    ataOnChainMint: null,
+    errors,
+  };
+
+  // 1. Stored ATA from DB
+  try {
+    const res = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
+    out.storedAta = res.rows[0]?.deposit_ata || null;
+  } catch (err) {
+    errors.push(`DB lookup: ${err.message}`);
+  }
+
+  // 2. Re-derive with TOKEN_2022_PROGRAM_ID (what the code currently uses)
+  try {
+    const depositKeypair = getUserDepositKeypair(telegramId);
+    const mint = getTokenMint();
+    const ata = getAssociatedTokenAddressSync(mint, depositKeypair.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    out.derivedAta_token2022 = ata.toBase58();
+    out.storedMatchesToken2022 = out.storedAta === out.derivedAta_token2022;
+  } catch (err) {
+    errors.push(`Derive Token-2022 ATA: ${err.message}`);
+  }
+
+  // 3. Re-derive with standard TOKEN_PROGRAM_ID
+  try {
+    const depositKeypair = getUserDepositKeypair(telegramId);
+    const mint = getTokenMint();
+    const ata = getAssociatedTokenAddressSync(mint, depositKeypair.publicKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    out.derivedAta_stdToken = ata.toBase58();
+    out.storedMatchesStdToken = out.storedAta === out.derivedAta_stdToken;
+  } catch (err) {
+    errors.push(`Derive Std-Token ATA: ${err.message}`);
+  }
+
+  if (!out.storedAta) return out;
+
+  const ataKey = new PublicKey(out.storedAta);
+
+  // 4. On-chain balance — try Token-2022
+  try {
+    const account = await getAccount(conn, ataKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    out.ataOnChainMint = account.mint.toBase58();
+    const mintInfo = await getMint(conn, account.mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    out.balance_token2022 = Number(account.amount) / Math.pow(10, mintInfo.decimals);
+  } catch (err) {
+    out.balance_token2022 = `error: ${err.message}`;
+  }
+
+  // 5. On-chain balance — try standard Token program
+  try {
+    const account = await getAccount(conn, ataKey, 'confirmed', TOKEN_PROGRAM_ID);
+    if (!out.ataOnChainMint) out.ataOnChainMint = account.mint.toBase58();
+    const mintInfo = await getMint(conn, account.mint, 'confirmed', TOKEN_PROGRAM_ID);
+    out.balance_stdToken = Number(account.amount) / Math.pow(10, mintInfo.decimals);
+  } catch (err) {
+    out.balance_stdToken = `error: ${err.message}`;
+  }
+
+  return out;
+}
+
+module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit };

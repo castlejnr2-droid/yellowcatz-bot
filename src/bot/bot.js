@@ -5,7 +5,7 @@ const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll } = require('../solana/depositPoller');
+const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { formatBalance } = require('./commands/start');
 
@@ -330,6 +330,50 @@ function createBot() {
       await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /checkdeposit <telegramId> — debug a user's deposit ATA (admin only)
+  bot.onText(/\/checkdeposit\s+(\d+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const telegramId = match[1];
+    await bot.sendMessage(msg.chat.id, `🔍 Checking deposit ATA for user ${telegramId}...`);
+    try {
+      const d = await debugUserDeposit(telegramId);
+
+      let text = `🔍 *Deposit Debug — User ${telegramId}*\n\n`;
+
+      text += `*Env Mint (YELLOWCATZ_TOKEN_MINT):*\n\`${d.mintEnvVar}\`\n\n`;
+
+      text += `*Stored ATA (DB):*\n\`${d.storedAta || 'NOT SET'}\`\n\n`;
+
+      text += `*Re-derived ATAs from current env:*\n`;
+      if (d.derivedAta_token2022) {
+        const match2022 = d.storedMatchesToken2022 ? '✅ matches stored' : '❌ MISMATCH vs stored';
+        text += `• Token-2022: \`${d.derivedAta_token2022}\`\n  ${match2022}\n`;
+      }
+      if (d.derivedAta_stdToken) {
+        const matchStd = d.storedMatchesStdToken ? '✅ matches stored' : '❌ MISMATCH vs stored';
+        text += `• Std Token:  \`${d.derivedAta_stdToken}\`\n  ${matchStd}\n`;
+      }
+      text += '\n';
+
+      text += `*On-chain balance of stored ATA:*\n`;
+      text += `• Token-2022 program: \`${d.balance_token2022 ?? 'n/a'}\`\n`;
+      text += `• Std Token program:  \`${d.balance_stdToken ?? 'n/a'}\`\n`;
+      if (d.ataOnChainMint) {
+        const mintMatch = d.ataOnChainMint === d.mintEnvVar ? '✅ matches env' : '❌ DIFFERENT from env!';
+        text += `• ATA's actual mint:  \`${d.ataOnChainMint}\`\n  ${mintMatch}\n`;
+      }
+
+      if (d.errors.length > 0) {
+        text += `\n*Errors:*\n`;
+        d.errors.forEach(e => { text += `• ${e}\n`; });
+      }
+
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ checkdeposit error: ${err.message}`);
     }
   });
 
