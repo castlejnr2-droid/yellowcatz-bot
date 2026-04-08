@@ -5,7 +5,7 @@ const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller } = require('../solana/depositPoller');
+const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { formatBalance } = require('./commands/start');
 
@@ -279,6 +279,59 @@ function createBot() {
           );
         }
       }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /whoseata <address> — find which user owns an ATA (admin only)
+  bot.onText(/\/whoseata\s+(.+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const address = match[1].trim();
+    const user = await findUserByATA(address);
+    if (user) {
+      const label = user.username ? `@${escMd(user.username)}` : (escMd(user.first_name) || `ID:${user.telegram_id}`);
+      await bot.sendMessage(msg.chat.id, `🔍 ATA \`${address}\` belongs to *${label}* (${user.telegram_id})`, { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(msg.chat.id, `❌ No user found with that ATA address.`);
+    }
+  });
+
+  // /sweep — sweep all user ATA tokens to hot wallet (admin only)
+  bot.onText(/\/sweep$/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    await bot.sendMessage(msg.chat.id, `🔄 Sweeping all user ATAs to hot wallet...`);
+    try {
+      const results = await sweepAll();
+      if (results.length === 0) {
+        return await bot.sendMessage(msg.chat.id, `✅ Nothing to sweep — all ATAs are empty.`);
+      }
+      let text = `✅ *Sweep Complete!*\n\n`;
+      let total = 0;
+      results.forEach(r => {
+        total += r.amount;
+        text += `• User ${r.telegramId}: \`${formatBalance(r.amount)}\` $YC\n  TX: \`${r.signature.slice(0, 16)}...\`\n`;
+      });
+      text += `\n💰 *Total swept:* \`${formatBalance(total)}\` $YC`;
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Sweep error: ${err.message}`);
+    }
+  });
+
+  // /sweep_<telegramId> — sweep a single user's ATA (admin only)
+  bot.onText(/\/sweep_(\d+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const targetId = match[1];
+    await bot.sendMessage(msg.chat.id, `🔄 Sweeping ATA for user ${targetId}...`);
+    try {
+      const result = await sweepUserATA(targetId);
+      if (!result) {
+        return await bot.sendMessage(msg.chat.id, `✅ Nothing to sweep — ATA empty or doesn't exist.`);
+      }
+      await bot.sendMessage(msg.chat.id,
+        `✅ *Swept ${formatBalance(result.amount)} $YC* from user ${targetId}\nTX: \`${result.signature}\``,
+        { parse_mode: 'Markdown' });
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
     }

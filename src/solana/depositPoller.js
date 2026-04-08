@@ -322,4 +322,99 @@ function startDepositPoller(bot) {
   return interval;
 }
 
-module.exports = { startDepositPoller, getOrCreateUserDepositATA };
+/**
+ * Sweep tokens from a user's deposit ATA to the hot wallet.
+ * Returns { amount, signature } or null if nothing to sweep.
+ */
+async function sweepUserATA(telegramId) {
+  const conn = getConnection();
+  const wallet = getHotWallet();
+  const mint = getTokenMint();
+  const depositKeypair = getUserDepositKeypair(telegramId);
+
+  if (!mintDecimals) {
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    mintDecimals = mintInfo.decimals;
+  }
+
+  const userAta = getAssociatedTokenAddressSync(
+    mint, depositKeypair.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  // Check balance
+  let account;
+  try {
+    account = await getAccount(conn, userAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  } catch {
+    return null; // ATA doesn't exist
+  }
+
+  const balance = Number(account.amount);
+  if (balance === 0) return null;
+
+  // Get or create hot wallet ATA
+  const { createAssociatedTokenAccountInstruction: createATAIx } = require('@solana/spl-token');
+  const hotAta = getAssociatedTokenAddressSync(
+    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const { createTransferInstruction } = require('@solana/spl-token');
+  const tx = new Transaction();
+
+  // Ensure hot wallet ATA exists
+  try {
+    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  } catch {
+    tx.add(createAssociatedTokenAccountInstruction(
+      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    ));
+  }
+
+  // Transfer from user ATA to hot wallet ATA
+  tx.add(createTransferInstruction(
+    userAta, hotAta, depositKeypair.publicKey, BigInt(balance), [], TOKEN_2022_PROGRAM_ID
+  ));
+
+  const { blockhash } = await conn.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  const sig = await sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]);
+  const uiAmount = balance / Math.pow(10, mintDecimals);
+
+  console.log(`[Sweep] Swept ${uiAmount} $YC from user ${telegramId} to hot wallet (tx: ${sig})`);
+  return { amount: uiAmount, signature: sig };
+}
+
+/**
+ * Sweep ALL user ATAs to the hot wallet.
+ * Returns array of { telegramId, amount, signature }.
+ */
+async function sweepAll() {
+  const res = await query('SELECT telegram_id, deposit_ata FROM users WHERE deposit_ata IS NOT NULL');
+  const results = [];
+
+  for (const user of res.rows) {
+    try {
+      const result = await sweepUserATA(user.telegram_id);
+      if (result) {
+        results.push({ telegramId: user.telegram_id, ...result });
+      }
+    } catch (err) {
+      console.error(`[Sweep] Failed for user ${user.telegram_id}:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  return results;
+}
+
+/**
+ * Find which user owns a given ATA address.
+ */
+async function findUserByATA(ataAddress) {
+  const res = await query('SELECT telegram_id, username, first_name FROM users WHERE deposit_ata = $1', [ataAddress]);
+  return res.rows[0] || null;
+}
+
+module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA };
