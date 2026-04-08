@@ -93,13 +93,14 @@ async function _handleCallback(bot, query) {
     await db.updateWithdrawalStatus(wId, 'processing');
     await edit(`🔄 Processing #${wId}...`);
 
+    const netAmount = withdrawal.amount - (withdrawal.fee || 0);
     try {
-      const txHash = await sendTokens(withdrawal.solana_address, withdrawal.amount);
+      const txHash = await sendTokens(withdrawal.solana_address, netAmount);
       await db.updateWithdrawalStatus(wId, 'completed', txHash);
       await edit(`✅ *#${wId} completed!*\nTX: \`${txHash}\``);
       try {
         await bot.sendMessage(withdrawal.user_id,
-          `✅ *Withdrawal Complete!*\n\nAmount: \`${formatBalance(withdrawal.amount)}\` $YC\nTX: \`${txHash}\``,
+          `✅ *Withdrawal Complete!*\n\nAmount: \`${formatBalance(netAmount)}\` $YC\nTX: \`${txHash}\``,
           { parse_mode: 'Markdown' });
       } catch {}
     } catch (err) {

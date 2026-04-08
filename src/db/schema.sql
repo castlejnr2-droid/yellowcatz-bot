@@ -79,6 +79,12 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 
+-- Add fee column to withdrawals if not exists
+DO $$ BEGIN
+  ALTER TABLE withdrawals ADD COLUMN fee DOUBLE PRECISION DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);

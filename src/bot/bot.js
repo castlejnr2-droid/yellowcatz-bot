@@ -85,8 +85,9 @@ function createBot() {
     await db.updateWithdrawalStatus(withdrawalId, 'processing');
     await bot.sendMessage(msg.chat.id, `🔄 Processing withdrawal #${withdrawalId}...`);
 
+    const netAmount = withdrawal.amount - (withdrawal.fee || 0);
     try {
-      const txHash = await sendTokens(withdrawal.solana_address, withdrawal.amount);
+      const txHash = await sendTokens(withdrawal.solana_address, netAmount);
       await db.updateWithdrawalStatus(withdrawalId, 'completed', txHash);
       await bot.sendMessage(msg.chat.id, `✅ Withdrawal #${withdrawalId} completed!\nTX: \`${txHash}\``, { parse_mode: 'Markdown' });
 
@@ -94,7 +95,7 @@ function createBot() {
       try {
         await bot.sendMessage(withdrawal.user_id,
           `✅ *Withdrawal Complete!*\n\n` +
-          `Amount: \`${formatBalance(withdrawal.amount)}\` $YC\n` +
+          `Amount: \`${formatBalance(netAmount)}\` $YC\n` +
           `TX: \`${txHash}\`\n\n` +
           `Your tokens are on their way! 🐱`,
           { parse_mode: 'Markdown' }

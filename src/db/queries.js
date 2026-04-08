@@ -94,15 +94,15 @@ async function recordTransfer(telegramId, fromWallet, toWallet, amount) {
 
 // ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
 
-async function createWithdrawal(telegramId, amount, solanaAddress) {
+async function createWithdrawal(telegramId, amount, solanaAddress, fee = 0) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('UPDATE users SET spot_balance = spot_balance - $1 WHERE telegram_id = $2',
       [amount, String(telegramId)]);
     const res = await client.query(
-      'INSERT INTO withdrawals (user_id, amount, solana_address) VALUES ($1, $2, $3) RETURNING id',
-      [String(telegramId), amount, solanaAddress]);
+      'INSERT INTO withdrawals (user_id, amount, solana_address, fee) VALUES ($1, $2, $3, $4) RETURNING id',
+      [String(telegramId), amount, solanaAddress, fee]);
     await client.query('COMMIT');
     return res.rows[0].id;
   } catch (e) {

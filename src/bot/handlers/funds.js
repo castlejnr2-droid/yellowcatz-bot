@@ -145,9 +145,11 @@ async function handleTextInput(bot, msg) {
     const address = text;
     const valid = await validateSolanaAddress(address);
     if (!valid) return await bot.sendMessage(chatId, `❌ Invalid Solana address.`);
-    setState(telegramId, { step: 'withdraw_confirm', amount: state.amount, address });
+    const fee = Math.round(state.amount * 0.05 * 100) / 100;
+    const netAmount = Math.round((state.amount - fee) * 100) / 100;
+    setState(telegramId, { step: 'withdraw_confirm', amount: state.amount, fee, netAmount, address });
     await bot.sendMessage(chatId,
-      `🐱 *Confirm Withdrawal*\n\nAmount: \`${formatBalance(state.amount)}\` $YC\nTo: \`${address}\`\n\n⚠️ Double-check the address!`,
+      `🐱 *Confirm Withdrawal*\n\nAmount: \`${formatBalance(state.amount)}\` $YC\nFee (5%): \`${formatBalance(fee)}\` $YC\nYou receive: \`${formatBalance(netAmount)}\` $YC\nTo: \`${address}\`\n\n⚠️ Double-check the address!`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: 'withdraw_confirm' }], [{ text: '❌ Cancel', callback_data: 'funds_cancel' }]] } });
     return true;
   }
@@ -161,18 +163,18 @@ async function confirmWithdrawal(bot, chatId, telegramId, msgId) {
   const user = await db.getUser(telegramId);
   if ((user.spot_balance || 0) < state.amount) { clearState(telegramId); return await bot.sendMessage(chatId, `❌ Insufficient balance.`); }
 
-  const withdrawalId = await db.createWithdrawal(telegramId, state.amount, state.address);
+  const withdrawalId = await db.createWithdrawal(telegramId, state.amount, state.address, state.fee);
   clearState(telegramId);
 
   await editOrSend(bot, chatId, msgId,
-    `✅ *Withdrawal Submitted!*\n\nID: \`#${withdrawalId}\`\nAmount: \`${formatBalance(state.amount)}\` $YC\nStatus: ⏳ *Pending*`,
+    `✅ *Withdrawal Submitted!*\n\nID: \`#${withdrawalId}\`\nAmount: \`${formatBalance(state.amount)}\` $YC\nFee (5%): \`${formatBalance(state.fee)}\` $YC\nYou receive: \`${formatBalance(state.netAmount)}\` $YC\nStatus: ⏳ *Pending*`,
     { reply_markup: { inline_keyboard: [[{ text: '📒 View History', callback_data: 'funds_history' }, { text: '🏠 Home', callback_data: 'back_main' }]] } });
 
   const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').filter(Boolean);
   for (const adminId of admins) {
     try {
       await bot.sendMessage(adminId,
-        `🆕 *New Withdrawal*\n\nUser: @${user.username || telegramId}\nAmount: \`${formatBalance(state.amount)}\` $YC\nAddress: \`${state.address}\`\nID: #${withdrawalId}\n\n/approve_${withdrawalId} or /reject_${withdrawalId}`,
+        `🆕 *New Withdrawal*\n\nUser: @${user.username || telegramId}\nAmount: \`${formatBalance(state.amount)}\` $YC\nFee: \`${formatBalance(state.fee)}\` $YC\nNet: \`${formatBalance(state.netAmount)}\` $YC\nAddress: \`${state.address}\`\nID: #${withdrawalId}\n\n/approve_${withdrawalId} or /reject_${withdrawalId}`,
         { parse_mode: 'Markdown' });
     } catch {}
   }
