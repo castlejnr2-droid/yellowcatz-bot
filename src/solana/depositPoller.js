@@ -2,6 +2,7 @@ const { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction }
 const {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
+  createTransferCheckedInstruction,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -66,7 +67,7 @@ function getUserDepositAddress(telegramId) {
     mint,
     depositKeypair.publicKey,
     false,
-    TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
   return ata.toBase58();
@@ -86,13 +87,13 @@ async function ensureDepositATA(telegramId) {
     mint,
     depositKeypair.publicKey,
     false,
-    TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   // Check if ATA already exists on-chain
   try {
-    await getAccount(conn, ataAddress, 'confirmed', TOKEN_PROGRAM_ID);
+    await getAccount(conn, ataAddress, 'confirmed', TOKEN_2022_PROGRAM_ID);
     // Already exists
     return ataAddress.toBase58();
   } catch (e) {
@@ -106,7 +107,7 @@ async function ensureDepositATA(telegramId) {
     ataAddress,               // ATA to create
     depositKeypair.publicKey, // owner
     mint,                     // mint
-    TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
@@ -167,7 +168,7 @@ async function pollDeposits(bot) {
     // Cache mint decimals
     if (!mintDecimals) {
       try {
-        const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
+        const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
         mintDecimals = mintInfo.decimals;
       } catch (err) {
         console.error('[Deposit] Failed to get mint info:', err.message);
@@ -184,7 +185,7 @@ async function pollDeposits(bot) {
 
         // Check if ATA exists on-chain before querying signatures
         try {
-          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_PROGRAM_ID);
+          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
         } catch {
           // ATA not created yet on-chain — skip
           continue;
@@ -355,7 +356,7 @@ async function rescanUser(telegramId, bot) {
   const mint = getTokenMint();
 
   if (!mintDecimals) {
-    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
     mintDecimals = mintInfo.decimals;
   }
 
@@ -364,10 +365,10 @@ async function rescanUser(telegramId, bot) {
   const storedAta = userRes.rows[0]?.deposit_ata;
   if (!storedAta) throw new Error('User has no deposit ATA');
 
-  // Re-derive with TOKEN_PROGRAM_ID (the correct program for standard SPL tokens)
+  // Re-derive with TOKEN_2022_PROGRAM_ID (correct for $YC Token-2022 token)
   const correctAta = getUserDepositAddress(telegramId);
 
-  // Collect unique addresses to scan: stored (may be legacy Token-2022 derived) + correct
+  // Collect unique addresses to scan: stored (may differ if previously migrated incorrectly) + correct
   const addressesToScan = [storedAta];
   if (correctAta !== storedAta) {
     addressesToScan.push(correctAta);
@@ -454,10 +455,10 @@ async function rescanUser(telegramId, bot) {
     }
   }
 
-  // Migrate stored ATA to the correct TOKEN_PROGRAM_ID derived address for future polls
+  // Ensure stored ATA is the correct TOKEN_2022_PROGRAM_ID derived address for future polls
   if (correctAta !== storedAta) {
     await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [correctAta, String(telegramId)]);
-    console.log(`[Rescan] Migrated deposit ATA for user ${telegramId} to correct TOKEN_PROGRAM_ID address`);
+    console.log(`[Rescan] Corrected deposit ATA for user ${telegramId} to TOKEN_2022_PROGRAM_ID derived address`);
   }
 
   return credited;
@@ -496,21 +497,21 @@ async function sweepUserATA(telegramId) {
   const depositKeypair = getUserDepositKeypair(telegramId);
 
   if (!mintDecimals) {
-    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
     mintDecimals = mintInfo.decimals;
   }
 
-  // Use the stored ATA address from DB — may be a legacy Token-2022-derived address
-  // where the user's tokens actually reside. Re-deriving here would give the wrong address.
+  // Use the stored ATA address from DB — this is where tokens actually reside.
+  // Re-deriving here would give the wrong address if stored ATA differs.
   const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
   const storedAtaStr = userRes.rows[0]?.deposit_ata;
   if (!storedAtaStr) return null;
   const userAta = new PublicKey(storedAtaStr);
 
-  // Check balance using standard Token program
+  // Check balance using Token-2022 program
   let account;
   try {
-    account = await getAccount(conn, userAta, 'confirmed', TOKEN_PROGRAM_ID);
+    account = await getAccount(conn, userAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
   } catch {
     return null; // ATA doesn't exist or is unreadable
   }
@@ -518,26 +519,25 @@ async function sweepUserATA(telegramId) {
   const balance = Number(account.amount);
   if (balance === 0) return null;
 
-  // Derive hot wallet ATA using standard Token program
+  // Derive hot wallet ATA using Token-2022 program
   const hotAta = getAssociatedTokenAddressSync(
-    mint, wallet.publicKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  const { createTransferInstruction } = require('@solana/spl-token');
   const tx = new Transaction();
 
   // Ensure hot wallet ATA exists
   try {
-    await getAccount(conn, hotAta, 'confirmed', TOKEN_PROGRAM_ID);
+    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
-      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
     ));
   }
 
-  // Transfer from user ATA to hot wallet ATA
-  tx.add(createTransferInstruction(
-    userAta, hotAta, depositKeypair.publicKey, BigInt(balance), [], TOKEN_PROGRAM_ID
+  // Token-2022 requires TransferChecked (includes mint + decimals for on-chain verification)
+  tx.add(createTransferCheckedInstruction(
+    userAta, mint, hotAta, depositKeypair.publicKey, BigInt(balance), mintDecimals, [], TOKEN_2022_PROGRAM_ID
   ));
 
   const { blockhash } = await conn.getLatestBlockhash();
