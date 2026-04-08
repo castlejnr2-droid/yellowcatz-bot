@@ -250,7 +250,7 @@ async function pollDeposits(bot) {
             await client.query('BEGIN');
             await client.query(
               'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-              [user.telegram_id, depositAmount, sigInfo.signature, 'on-chain']
+              [user.telegram_id, depositAmount, sigInfo.signature, user.deposit_ata]
             );
             await client.query(
               'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
@@ -348,7 +348,13 @@ function startDepositPoller(bot) {
 }
 
 /**
- * Rescan a user's ATA for ALL missed deposits and credit them.
+ * Rescan a user's ATA for missed deposits by directly checking on-chain balance.
+ * Avoids unreliable transaction history parsing; works even if RPC rate-limits signatures.
+ *
+ * Dedup logic: sum of deposits WHERE from_address = ataAddress tells us how much has
+ * already been credited from that specific ATA (both pollDeposits and prior rescans
+ * now store the ATA address in from_address). The difference is credited.
+ *
  * Returns array of { amount, signature } for newly credited deposits.
  */
 async function rescanUser(telegramId, bot) {
@@ -360,105 +366,87 @@ async function rescanUser(telegramId, bot) {
     mintDecimals = mintInfo.decimals;
   }
 
-  // Get user's stored deposit ATA
   const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
   const storedAta = userRes.rows[0]?.deposit_ata;
   if (!storedAta) throw new Error('User has no deposit ATA');
 
-  // Re-derive with TOKEN_2022_PROGRAM_ID (correct for $YC Token-2022 token)
+  // Re-derive the correct TOKEN_2022_PROGRAM_ID address.
+  // storedAta may differ if it was incorrectly migrated to TOKEN_PROGRAM_ID in a prior deploy.
   const correctAta = getUserDepositAddress(telegramId);
 
-  // Collect unique addresses to scan: stored (may differ if previously migrated incorrectly) + correct
-  const addressesToScan = [storedAta];
-  if (correctAta !== storedAta) {
-    addressesToScan.push(correctAta);
-    console.log(`[Rescan] User ${telegramId}: stored ATA ${storedAta.slice(0,8)}... differs from correct ATA ${correctAta.slice(0,8)}... — scanning both`);
-  }
-
+  // Check both stored and correct addresses — covers any migration inconsistency
+  const addressesToCheck = [...new Set([storedAta, correctAta])];
   const credited = [];
 
-  for (const depositAta of addressesToScan) {
-    const ataPublicKey = new PublicKey(depositAta);
+  for (const ataAddress of addressesToCheck) {
+    const ataPublicKey = new PublicKey(ataAddress);
 
-    // Fetch up to 50 recent signatures for this address
-    let signatures;
+    // Directly read on-chain token balance — no transaction history needed
+    let account;
     try {
-      signatures = await conn.getSignaturesForAddress(ataPublicKey, { limit: 50 });
-    } catch (err) {
-      console.error(`[Rescan] getSignaturesForAddress failed for ${depositAta.slice(0,8)}...:`, err.message);
+      account = await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    } catch {
+      console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: not found on-chain, skipping`);
       continue;
     }
-    if (signatures.length === 0) continue;
 
-    const toProcess = signatures.reverse(); // oldest first
+    const onChainRaw = Number(account.amount);
+    if (onChainRaw === 0) {
+      console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: balance is 0, skipping`);
+      continue;
+    }
 
-    for (const sigInfo of toProcess) {
-      if (sigInfo.err) continue;
+    const onChainBalance = onChainRaw / Math.pow(10, mintDecimals);
 
-      // Skip already processed
-      const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
-      if (already.rows.length > 0) continue;
+    // How much has already been credited from this specific ATA address?
+    // pollDeposits now stores from_address = user.deposit_ata, and rescans store from_address = ataAddress
+    const alreadyRes = await query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM deposits WHERE user_id = $1 AND from_address = $2`,
+      [String(telegramId), ataAddress]
+    );
+    const alreadyCredited = parseFloat(alreadyRes.rows[0].total) || 0;
 
-      await new Promise(r => setTimeout(r, 500)); // rate limit
+    // Use raw integer units to avoid floating-point rounding errors
+    const alreadyCreditedRaw = Math.round(alreadyCredited * Math.pow(10, mintDecimals));
+    const uncreditedRaw = onChainRaw - alreadyCreditedRaw;
 
-      const tx = await conn.getTransaction(sigInfo.signature, {
-        maxSupportedTransactionVersion: 0,
-        commitment: 'confirmed'
-      });
+    if (uncreditedRaw <= 0) {
+      console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: ${onChainBalance} on-chain, ${alreadyCredited} already credited — nothing new`);
+      continue;
+    }
 
-      if (!tx || !tx.meta) continue;
+    const uncreditedAmount = uncreditedRaw / Math.pow(10, mintDecimals);
+    console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: ${onChainBalance} on-chain, ${alreadyCredited} already credited — crediting ${uncreditedAmount}`);
 
-      const preBalances = tx.meta.preTokenBalances || [];
-      const postBalances = tx.meta.postTokenBalances || [];
+    // Synthetic signature is unique per run so the UNIQUE constraint never blocks it
+    const syntheticSig = `balance_rescan:${ataAddress}:${Date.now()}`;
 
-      const accountKeys = tx.transaction.message.staticAccountKeys ||
-                          tx.transaction.message.accountKeys;
-      const ataIndex = accountKeys.findIndex(k => {
-        const addr = typeof k === 'string' ? k : k.toBase58();
-        return addr === depositAta;
-      });
-
-      if (ataIndex === -1) continue;
-
-      const preBal = preBalances.find(b => b.accountIndex === ataIndex);
-      const postBal = postBalances.find(b => b.accountIndex === ataIndex);
-
-      if (!postBal) continue;
-
-      const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
-      const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
-      const depositAmount = postAmount - preAmount;
-
-      if (depositAmount <= 0) continue;
-
-      // Credit (dedicated client so BEGIN/COMMIT stay on one connection)
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query(
-          'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-          [String(telegramId), depositAmount, sigInfo.signature, depositAta]
-        );
-        await client.query(
-          'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-          [depositAmount, String(telegramId)]
-        );
-        await client.query('COMMIT');
-        credited.push({ amount: depositAmount, signature: sigInfo.signature });
-        console.log(`[Rescan] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
-      } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
-      } finally {
-        client.release();
-      }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+        [String(telegramId), uncreditedAmount, syntheticSig, ataAddress]
+      );
+      await client.query(
+        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+        [uncreditedAmount, String(telegramId)]
+      );
+      await client.query('COMMIT');
+      credited.push({ amount: uncreditedAmount, signature: syntheticSig });
+      console.log(`[Rescan] Credited ${uncreditedAmount} $YC to user ${telegramId} from ATA ${ataAddress.slice(0,8)}...`);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
+    } finally {
+      client.release();
     }
   }
 
-  // Ensure stored ATA is the correct TOKEN_2022_PROGRAM_ID derived address for future polls
+  // Fix stored ATA back to the correct TOKEN_2022_PROGRAM_ID address if it was migrated wrong
   if (correctAta !== storedAta) {
     await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [correctAta, String(telegramId)]);
-    console.log(`[Rescan] Corrected deposit ATA for user ${telegramId} to TOKEN_2022_PROGRAM_ID derived address`);
+    console.log(`[Rescan] Corrected deposit ATA for user ${telegramId} → ${correctAta.slice(0,8)}...`);
   }
 
   return credited;
