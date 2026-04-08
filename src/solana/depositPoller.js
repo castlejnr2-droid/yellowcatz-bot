@@ -223,7 +223,10 @@ async function pollDeposits(bot) {
 
           const accountKeys = tx.transaction.message.staticAccountKeys ||
                               tx.transaction.message.accountKeys;
-          const ataIndex = accountKeys.findIndex(k => k.toBase58() === user.deposit_ata);
+          const ataIndex = accountKeys.findIndex(k => {
+            const addr = typeof k === 'string' ? k : k.toBase58();
+            return addr === user.deposit_ata;
+          });
 
           if (ataIndex === -1) continue;
 
@@ -323,6 +326,117 @@ function startDepositPoller(bot) {
 }
 
 /**
+ * Rescan a user's ATA for ALL missed deposits and credit them.
+ * Returns array of { amount, signature } for newly credited deposits.
+ */
+async function rescanUser(telegramId, bot) {
+  const conn = getConnection();
+  const mint = getTokenMint();
+
+  if (!mintDecimals) {
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    mintDecimals = mintInfo.decimals;
+  }
+
+  // Get user's deposit ATA
+  const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
+  const depositAta = userRes.rows[0]?.deposit_ata;
+  if (!depositAta) throw new Error('User has no deposit ATA');
+
+  const ataPublicKey = new PublicKey(depositAta);
+
+  // Fetch up to 50 recent signatures
+  const signatures = await conn.getSignaturesForAddress(ataPublicKey, { limit: 50 });
+  if (signatures.length === 0) return [];
+
+  const credited = [];
+  const toProcess = signatures.reverse(); // oldest first
+
+  for (const sigInfo of toProcess) {
+    if (sigInfo.err) continue;
+
+    // Skip already processed
+    const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
+    if (already.rows.length > 0) continue;
+
+    await new Promise(r => setTimeout(r, 500)); // rate limit
+
+    const tx = await conn.getTransaction(sigInfo.signature, {
+      maxSupportedTransactionVersion: 0,
+      commitment: 'confirmed'
+    });
+
+    if (!tx || !tx.meta) continue;
+
+    const preBalances = tx.meta.preTokenBalances || [];
+    const postBalances = tx.meta.postTokenBalances || [];
+
+    const accountKeys = tx.transaction.message.staticAccountKeys ||
+                        tx.transaction.message.accountKeys;
+    const ataIndex = accountKeys.findIndex(k => {
+      const addr = typeof k === 'string' ? k : k.toBase58();
+      return addr === depositAta;
+    });
+
+    if (ataIndex === -1) continue;
+
+    const preBal = preBalances.find(b => b.accountIndex === ataIndex);
+    const postBal = postBalances.find(b => b.accountIndex === ataIndex);
+
+    if (!postBal) continue;
+
+    const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
+    const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
+    const depositAmount = postAmount - preAmount;
+
+    if (depositAmount <= 0) continue;
+
+    // Credit
+    await query('BEGIN');
+    try {
+      await query(
+        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+        [String(telegramId), depositAmount, sigInfo.signature, 'on-chain']
+      );
+      await query(
+        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+        [depositAmount, String(telegramId)]
+      );
+      await query('COMMIT');
+      credited.push({ amount: depositAmount, signature: sigInfo.signature });
+      console.log(`[Rescan] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
+    } catch (err) {
+      await query('ROLLBACK');
+      console.error(`[Rescan] Failed to credit:`, err.message);
+    }
+  }
+
+  return credited;
+}
+
+/**
+ * Rescan ALL users with ATAs for missed deposits.
+ */
+async function rescanAll(bot) {
+  const res = await query('SELECT telegram_id FROM users WHERE deposit_ata IS NOT NULL');
+  const allResults = [];
+
+  for (const user of res.rows) {
+    try {
+      const results = await rescanUser(user.telegram_id, bot);
+      if (results.length > 0) {
+        allResults.push({ telegramId: user.telegram_id, deposits: results });
+      }
+    } catch (err) {
+      console.error(`[Rescan] Error for user ${user.telegram_id}:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return allResults;
+}
+
+/**
  * Sweep tokens from a user's deposit ATA to the hot wallet.
  * Returns { amount, signature } or null if nothing to sweep.
  */
@@ -417,4 +531,4 @@ async function findUserByATA(ataAddress) {
   return res.rows[0] || null;
 }
 
-module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA };
+module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll };

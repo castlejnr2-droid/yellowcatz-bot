@@ -5,7 +5,7 @@ const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA } = require('../solana/depositPoller');
+const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { formatBalance } = require('./commands/start');
 
@@ -279,6 +279,51 @@ function createBot() {
           );
         }
       }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /rescan — rescan ALL user ATAs for missed deposits (admin only)
+  bot.onText(/\/rescan$/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    await bot.sendMessage(msg.chat.id, `🔍 Rescanning all user ATAs for missed deposits...`);
+    try {
+      const results = await rescanAll(bot);
+      if (results.length === 0) {
+        return await bot.sendMessage(msg.chat.id, `✅ No missed deposits found.`);
+      }
+      let text = `✅ *Rescan Complete\\!*\n\n`;
+      let grandTotal = 0;
+      for (const r of results) {
+        const userTotal = r.deposits.reduce((s, d) => s + d.amount, 0);
+        grandTotal += userTotal;
+        text += `• User ${r.telegramId}: \`${formatBalance(userTotal)}\` $YC (${r.deposits.length} tx)\n`;
+      }
+      text += `\n💰 *Total recovered:* \`${formatBalance(grandTotal)}\` $YC`;
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Rescan error: ${err.message}`);
+    }
+  });
+
+  // /rescan_<telegramId> — rescan a single user (admin only)
+  bot.onText(/\/rescan_(\d+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const targetId = match[1];
+    await bot.sendMessage(msg.chat.id, `🔍 Rescanning deposits for user ${targetId}...`);
+    try {
+      const results = await rescanUser(targetId, bot);
+      if (results.length === 0) {
+        return await bot.sendMessage(msg.chat.id, `✅ No missed deposits for user ${targetId}.`);
+      }
+      const total = results.reduce((s, d) => s + d.amount, 0);
+      let text = `✅ *Found ${results.length} missed deposit(s)!*\n\n`;
+      results.forEach(d => {
+        text += `• \`${formatBalance(d.amount)}\` $YC — TX: \`${d.signature.slice(0, 16)}...\`\n`;
+      });
+      text += `\n💰 *Total credited:* \`${formatBalance(total)}\` $YC`;
+      await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
     }
