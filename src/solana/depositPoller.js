@@ -66,7 +66,7 @@ function getUserDepositAddress(telegramId) {
     mint,
     depositKeypair.publicKey,
     false,
-    TOKEN_2022_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
   return ata.toBase58();
@@ -86,13 +86,13 @@ async function ensureDepositATA(telegramId) {
     mint,
     depositKeypair.publicKey,
     false,
-    TOKEN_2022_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   // Check if ATA already exists on-chain
   try {
-    await getAccount(conn, ataAddress, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    await getAccount(conn, ataAddress, 'confirmed', TOKEN_PROGRAM_ID);
     // Already exists
     return ataAddress.toBase58();
   } catch (e) {
@@ -106,7 +106,7 @@ async function ensureDepositATA(telegramId) {
     ataAddress,               // ATA to create
     depositKeypair.publicKey, // owner
     mint,                     // mint
-    TOKEN_2022_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
@@ -167,7 +167,7 @@ async function pollDeposits(bot) {
     // Cache mint decimals
     if (!mintDecimals) {
       try {
-        const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
         mintDecimals = mintInfo.decimals;
       } catch (err) {
         console.error('[Deposit] Failed to get mint info:', err.message);
@@ -184,7 +184,7 @@ async function pollDeposits(bot) {
 
         // Check if ATA exists on-chain before querying signatures
         try {
-          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_PROGRAM_ID);
         } catch {
           // ATA not created yet on-chain — skip
           continue;
@@ -355,84 +355,109 @@ async function rescanUser(telegramId, bot) {
   const mint = getTokenMint();
 
   if (!mintDecimals) {
-    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
     mintDecimals = mintInfo.decimals;
   }
 
-  // Get user's deposit ATA
+  // Get user's stored deposit ATA
   const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
-  const depositAta = userRes.rows[0]?.deposit_ata;
-  if (!depositAta) throw new Error('User has no deposit ATA');
+  const storedAta = userRes.rows[0]?.deposit_ata;
+  if (!storedAta) throw new Error('User has no deposit ATA');
 
-  const ataPublicKey = new PublicKey(depositAta);
+  // Re-derive with TOKEN_PROGRAM_ID (the correct program for standard SPL tokens)
+  const correctAta = getUserDepositAddress(telegramId);
 
-  // Fetch up to 50 recent signatures
-  const signatures = await conn.getSignaturesForAddress(ataPublicKey, { limit: 50 });
-  if (signatures.length === 0) return [];
+  // Collect unique addresses to scan: stored (may be legacy Token-2022 derived) + correct
+  const addressesToScan = [storedAta];
+  if (correctAta !== storedAta) {
+    addressesToScan.push(correctAta);
+    console.log(`[Rescan] User ${telegramId}: stored ATA ${storedAta.slice(0,8)}... differs from correct ATA ${correctAta.slice(0,8)}... — scanning both`);
+  }
 
   const credited = [];
-  const toProcess = signatures.reverse(); // oldest first
 
-  for (const sigInfo of toProcess) {
-    if (sigInfo.err) continue;
+  for (const depositAta of addressesToScan) {
+    const ataPublicKey = new PublicKey(depositAta);
 
-    // Skip already processed
-    const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
-    if (already.rows.length > 0) continue;
-
-    await new Promise(r => setTimeout(r, 500)); // rate limit
-
-    const tx = await conn.getTransaction(sigInfo.signature, {
-      maxSupportedTransactionVersion: 0,
-      commitment: 'confirmed'
-    });
-
-    if (!tx || !tx.meta) continue;
-
-    const preBalances = tx.meta.preTokenBalances || [];
-    const postBalances = tx.meta.postTokenBalances || [];
-
-    const accountKeys = tx.transaction.message.staticAccountKeys ||
-                        tx.transaction.message.accountKeys;
-    const ataIndex = accountKeys.findIndex(k => {
-      const addr = typeof k === 'string' ? k : k.toBase58();
-      return addr === depositAta;
-    });
-
-    if (ataIndex === -1) continue;
-
-    const preBal = preBalances.find(b => b.accountIndex === ataIndex);
-    const postBal = postBalances.find(b => b.accountIndex === ataIndex);
-
-    if (!postBal) continue;
-
-    const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
-    const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
-    const depositAmount = postAmount - preAmount;
-
-    if (depositAmount <= 0) continue;
-
-    // Credit (dedicated client so BEGIN/COMMIT stay on one connection)
-    const client = await pool.connect();
+    // Fetch up to 50 recent signatures for this address
+    let signatures;
     try {
-      await client.query('BEGIN');
-      await client.query(
-        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-        [String(telegramId), depositAmount, sigInfo.signature, 'on-chain']
-      );
-      await client.query(
-        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-        [depositAmount, String(telegramId)]
-      );
-      await client.query('COMMIT');
-      credited.push({ amount: depositAmount, signature: sigInfo.signature });
-      console.log(`[Rescan] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
+      signatures = await conn.getSignaturesForAddress(ataPublicKey, { limit: 50 });
     } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
-    } finally {
-      client.release();
+      console.error(`[Rescan] getSignaturesForAddress failed for ${depositAta.slice(0,8)}...:`, err.message);
+      continue;
     }
+    if (signatures.length === 0) continue;
+
+    const toProcess = signatures.reverse(); // oldest first
+
+    for (const sigInfo of toProcess) {
+      if (sigInfo.err) continue;
+
+      // Skip already processed
+      const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
+      if (already.rows.length > 0) continue;
+
+      await new Promise(r => setTimeout(r, 500)); // rate limit
+
+      const tx = await conn.getTransaction(sigInfo.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed'
+      });
+
+      if (!tx || !tx.meta) continue;
+
+      const preBalances = tx.meta.preTokenBalances || [];
+      const postBalances = tx.meta.postTokenBalances || [];
+
+      const accountKeys = tx.transaction.message.staticAccountKeys ||
+                          tx.transaction.message.accountKeys;
+      const ataIndex = accountKeys.findIndex(k => {
+        const addr = typeof k === 'string' ? k : k.toBase58();
+        return addr === depositAta;
+      });
+
+      if (ataIndex === -1) continue;
+
+      const preBal = preBalances.find(b => b.accountIndex === ataIndex);
+      const postBal = postBalances.find(b => b.accountIndex === ataIndex);
+
+      if (!postBal) continue;
+
+      const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
+      const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
+      const depositAmount = postAmount - preAmount;
+
+      if (depositAmount <= 0) continue;
+
+      // Credit (dedicated client so BEGIN/COMMIT stay on one connection)
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+          [String(telegramId), depositAmount, sigInfo.signature, depositAta]
+        );
+        await client.query(
+          'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+          [depositAmount, String(telegramId)]
+        );
+        await client.query('COMMIT');
+        credited.push({ amount: depositAmount, signature: sigInfo.signature });
+        console.log(`[Rescan] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  // Migrate stored ATA to the correct TOKEN_PROGRAM_ID derived address for future polls
+  if (correctAta !== storedAta) {
+    await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [correctAta, String(telegramId)]);
+    console.log(`[Rescan] Migrated deposit ATA for user ${telegramId} to correct TOKEN_PROGRAM_ID address`);
   }
 
   return credited;
@@ -471,29 +496,31 @@ async function sweepUserATA(telegramId) {
   const depositKeypair = getUserDepositKeypair(telegramId);
 
   if (!mintDecimals) {
-    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_PROGRAM_ID);
     mintDecimals = mintInfo.decimals;
   }
 
-  const userAta = getAssociatedTokenAddressSync(
-    mint, depositKeypair.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  // Use the stored ATA address from DB — may be a legacy Token-2022-derived address
+  // where the user's tokens actually reside. Re-deriving here would give the wrong address.
+  const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
+  const storedAtaStr = userRes.rows[0]?.deposit_ata;
+  if (!storedAtaStr) return null;
+  const userAta = new PublicKey(storedAtaStr);
 
-  // Check balance
+  // Check balance using standard Token program
   let account;
   try {
-    account = await getAccount(conn, userAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    account = await getAccount(conn, userAta, 'confirmed', TOKEN_PROGRAM_ID);
   } catch {
-    return null; // ATA doesn't exist
+    return null; // ATA doesn't exist or is unreadable
   }
 
   const balance = Number(account.amount);
   if (balance === 0) return null;
 
-  // Get or create hot wallet ATA
-  const { createAssociatedTokenAccountInstruction: createATAIx } = require('@solana/spl-token');
+  // Derive hot wallet ATA using standard Token program
   const hotAta = getAssociatedTokenAddressSync(
-    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    mint, wallet.publicKey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   const { createTransferInstruction } = require('@solana/spl-token');
@@ -501,16 +528,16 @@ async function sweepUserATA(telegramId) {
 
   // Ensure hot wallet ATA exists
   try {
-    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    await getAccount(conn, hotAta, 'confirmed', TOKEN_PROGRAM_ID);
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
-      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
     ));
   }
 
   // Transfer from user ATA to hot wallet ATA
   tx.add(createTransferInstruction(
-    userAta, hotAta, depositKeypair.publicKey, BigInt(balance), [], TOKEN_2022_PROGRAM_ID
+    userAta, hotAta, depositKeypair.publicKey, BigInt(balance), [], TOKEN_PROGRAM_ID
   ));
 
   const { blockhash } = await conn.getLatestBlockhash();
