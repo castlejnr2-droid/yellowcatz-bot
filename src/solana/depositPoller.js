@@ -381,16 +381,26 @@ async function rescanUser(telegramId, bot) {
   for (const ataAddress of addressesToCheck) {
     const ataPublicKey = new PublicKey(ataAddress);
 
-    // Directly read on-chain token balance — no transaction history needed
-    let account;
+    // Directly read on-chain token balance — no transaction history needed.
+    // Use getTokenAccountBalance as fallback because getAccount throws for
+    // "closed"-status ATAs that still hold tokens (Solscan shows CLOSED but RPC confirms balance).
+    let onChainRaw = 0;
     try {
-      account = await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+      const account = await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+      onChainRaw = Number(account.amount);
     } catch {
-      console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: not found on-chain, skipping`);
-      continue;
+      try {
+        const balResp = await conn.getTokenAccountBalance(ataPublicKey, 'confirmed');
+        if (balResp?.value?.amount) {
+          onChainRaw = Number(balResp.value.amount);
+          console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: getAccount failed, fallback balance = ${onChainRaw}`);
+        }
+      } catch {
+        console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: not found on-chain, skipping`);
+        continue;
+      }
     }
 
-    const onChainRaw = Number(account.amount);
     if (onChainRaw === 0) {
       console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0,8)}...: balance is 0, skipping`);
       continue;

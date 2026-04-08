@@ -7,6 +7,7 @@ const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
 const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit } = require('../solana/depositPoller');
 const db = require('../db/queries');
+const { pool } = require('../db');
 const { formatBalance } = require('./commands/start');
 
 require('dotenv').config();
@@ -285,6 +286,47 @@ function createBot() {
       }
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /credituser <telegramId> <amount> — manually credit a user's spot balance (admin only)
+  bot.onText(/\/credituser\s+(\d+)\s+([\d.]+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const targetId = match[1];
+    const amount = parseFloat(match[2]);
+    if (isNaN(amount) || amount <= 0) {
+      return await bot.sendMessage(msg.chat.id, `❌ Invalid amount.`);
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const syntheticSig = `manual_credit:${targetId}:${Date.now()}`;
+      await client.query(
+        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+        [String(targetId), amount, syntheticSig, 'manual_admin_credit']
+      );
+      await client.query(
+        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+        [amount, String(targetId)]
+      );
+      await client.query('COMMIT');
+      console.log(`[Admin] Manually credited ${amount} $YC to user ${targetId} by admin ${msg.from.id}`);
+      await bot.sendMessage(msg.chat.id,
+        `✅ *Manual Credit Applied*\n\nUser: \`${targetId}\`\nAmount: \`${formatBalance(amount)}\` $YC added to Spot Balance`,
+        { parse_mode: 'Markdown' }
+      );
+      try {
+        await bot.sendMessage(targetId,
+          `✅ *Balance Credited!*\n\n\`${formatBalance(amount)}\` $YC has been added to your 💲 Spot Balance.`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch { }
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(`[Admin] credituser failed for ${targetId}:`, err.message);
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    } finally {
+      client.release();
     }
   });
 
