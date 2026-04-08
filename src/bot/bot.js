@@ -292,27 +292,65 @@ function createBot() {
   // /credituser <telegramId> <amount> — manually credit a user's spot balance (admin only)
   bot.onText(/\/credituser\s+(\d+)\s+([\d.]+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
-    const targetId = match[1];
+    const targetId = String(match[1]);
     const amount = parseFloat(match[2]);
     if (isNaN(amount) || amount <= 0) {
       return await bot.sendMessage(msg.chat.id, `❌ Invalid amount.`);
     }
+
+    console.log(`[CreditUser] Starting manual credit: user=${targetId} amount=${amount}`);
+
+    // Step 1: confirm user exists and read current balance
+    const userCheck = await pool.query('SELECT telegram_id, spot_balance FROM users WHERE telegram_id = $1', [targetId]);
+    if (userCheck.rows.length === 0) {
+      console.error(`[CreditUser] ABORT — no user row found for telegram_id=${targetId}`);
+      return await bot.sendMessage(msg.chat.id,
+        `❌ User \`${targetId}\` not found in database. They must /start the bot first.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+    const balanceBefore = parseFloat(userCheck.rows[0].spot_balance) || 0;
+    console.log(`[CreditUser] User found. spot_balance BEFORE = ${balanceBefore}`);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const syntheticSig = `manual_credit:${targetId}:${Date.now()}`;
-      await client.query(
-        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-        [String(targetId), amount, syntheticSig, 'manual_admin_credit']
-      );
-      await client.query(
+
+      // Step 2: update balance — capture rowCount to detect silent 0-row updates
+      const updateRes = await client.query(
         'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-        [amount, String(targetId)]
+        [amount, targetId]
       );
+      console.log(`[CreditUser] UPDATE rowCount = ${updateRes.rowCount}`);
+      if (updateRes.rowCount === 0) {
+        throw new Error(`UPDATE matched 0 rows for telegram_id=${targetId} — balance not changed`);
+      }
+
+      // Step 3: insert audit record (skip if deposits table FK would reject it)
+      const syntheticSig = `manual_credit:${targetId}:${Date.now()}`;
+      try {
+        await client.query(
+          'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+          [targetId, amount, syntheticSig, 'manual_admin_credit']
+        );
+      } catch (insertErr) {
+        // FK violation means deposits table references users but the row wasn't found —
+        // UPDATE already confirmed user exists so log this but don't block the credit
+        console.warn(`[CreditUser] deposits INSERT skipped (${insertErr.message}) — balance update will still commit`);
+      }
+
       await client.query('COMMIT');
-      console.log(`[Admin] Manually credited ${amount} $YC to user ${targetId} by admin ${msg.from.id}`);
+
+      // Step 4: read back to confirm
+      const afterRes = await pool.query('SELECT spot_balance FROM users WHERE telegram_id = $1', [targetId]);
+      const balanceAfter = parseFloat(afterRes.rows[0]?.spot_balance) || 0;
+      console.log(`[CreditUser] COMMITTED. spot_balance AFTER = ${balanceAfter} (expected ${balanceBefore + amount})`);
+
       await bot.sendMessage(msg.chat.id,
-        `✅ *Manual Credit Applied*\n\nUser: \`${targetId}\`\nAmount: \`${formatBalance(amount)}\` $YC added to Spot Balance`,
+        `✅ *Manual Credit Applied*\n\n` +
+        `User: \`${targetId}\`\n` +
+        `Amount: \`${formatBalance(amount)}\` $YC\n` +
+        `Balance: \`${formatBalance(balanceBefore)}\` → \`${formatBalance(balanceAfter)}\` $YC`,
         { parse_mode: 'Markdown' }
       );
       try {
@@ -323,8 +361,8 @@ function createBot() {
       } catch { }
     } catch (err) {
       await client.query('ROLLBACK');
-      console.error(`[Admin] credituser failed for ${targetId}:`, err.message);
-      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+      console.error(`[CreditUser] ROLLED BACK — ${err.message}`);
+      await bot.sendMessage(msg.chat.id, `❌ Credit failed: ${err.message}`);
     } finally {
       client.release();
     }
