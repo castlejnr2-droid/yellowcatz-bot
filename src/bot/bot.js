@@ -74,64 +74,68 @@ function createBot() {
     return admins.includes(String(telegramId));
   };
 
-  // /approve_<id>
-  bot.onText(/\/approve_(\d+)/, async (msg, match) => {
-    if (!isAdmin(msg.from.id)) return;
-    const withdrawalId = parseInt(match[1]);
+  // ── Shared approve/reject logic ──
+  async function processApproval(chatId, withdrawalId) {
     const withdrawal = await db.getWithdrawalById(withdrawalId);
-    if (!withdrawal) return await bot.sendMessage(msg.chat.id, `❌ Withdrawal #${withdrawalId} not found.`);
-    if (withdrawal.status !== 'pending') return await bot.sendMessage(msg.chat.id, `❌ Already ${withdrawal.status}.`);
+    if (!withdrawal) return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} not found.`);
+    if (withdrawal.status !== 'pending') return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
 
     await db.updateWithdrawalStatus(withdrawalId, 'processing');
-    await bot.sendMessage(msg.chat.id, `🔄 Processing withdrawal #${withdrawalId}...`);
+    await bot.sendMessage(chatId, `🔄 Processing withdrawal #${withdrawalId}...`);
 
     const netAmount = withdrawal.amount - (withdrawal.fee || 0);
     try {
       const txHash = await sendTokens(withdrawal.solana_address, netAmount);
       await db.updateWithdrawalStatus(withdrawalId, 'completed', txHash);
-      await bot.sendMessage(msg.chat.id, `✅ Withdrawal #${withdrawalId} completed!\nTX: \`${txHash}\``, { parse_mode: 'Markdown' });
-
-      // Notify user
+      await bot.sendMessage(chatId, `✅ Withdrawal #${withdrawalId} completed!\nTX: \`${txHash}\``, { parse_mode: 'Markdown' });
       try {
         await bot.sendMessage(withdrawal.user_id,
-          `✅ *Withdrawal Complete!*\n\n` +
-          `Amount: \`${formatBalance(netAmount)}\` $YC\n` +
-          `TX: \`${txHash}\`\n\n` +
-          `Your tokens are on their way! 🐱`,
+          `✅ *Withdrawal Complete!*\n\nAmount: \`${formatBalance(netAmount)}\` $YC\nTX: \`${txHash}\`\n\nYour tokens are on their way! 🐱`,
           { parse_mode: 'Markdown' }
         );
       } catch { }
     } catch (err) {
-      await db.updateWithdrawalStatus(withdrawalId, 'failed', null, err.message);
-      await db.refundWithdrawal(withdrawal);
-      await bot.sendMessage(msg.chat.id, `❌ Failed: ${err.message}\nBalance refunded.`);
+      console.error(`[APPROVE] Withdrawal #${withdrawalId} sendTokens failed:`, err.message, err.stack || '');
+      try {
+        await db.updateWithdrawalStatus(withdrawalId, 'failed', null, err.message);
+        await db.refundWithdrawal(withdrawal);
+      } catch (dbErr) {
+        console.error(`[APPROVE] DB refund error for #${withdrawalId}:`, dbErr.message);
+      }
+      await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} failed:\n\`${err.message}\`\n\nBalance has been refunded to user.`, { parse_mode: 'Markdown' });
       try {
         await bot.sendMessage(withdrawal.user_id,
-          `❌ *Withdrawal Failed*\n\n` +
-          `Your \`${formatBalance(withdrawal.amount)}\` $YC has been refunded to your Spot Balance.\n` +
-          `Please try again.`,
+          `❌ *Withdrawal Failed*\n\nYour \`${formatBalance(withdrawal.amount)}\` $YC has been refunded to your Spot Balance.\nPlease try again.`,
           { parse_mode: 'Markdown' }
         );
       } catch { }
     }
-  });
+  }
 
-  // /reject_<id>
-  bot.onText(/\/reject_(\d+)/, async (msg, match) => {
-    if (!isAdmin(msg.from.id)) return;
-    const withdrawalId = parseInt(match[1]);
+  async function processRejection(chatId, withdrawalId) {
     const withdrawal = await db.getWithdrawalById(withdrawalId);
-    if (!withdrawal) return await bot.sendMessage(msg.chat.id, `❌ Not found.`);
+    if (!withdrawal) return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} not found.`);
+    if (withdrawal.status !== 'pending') return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} is already ${withdrawal.status}. Only pending withdrawals can be rejected.`);
     await db.refundWithdrawal(withdrawal);
-    await bot.sendMessage(msg.chat.id, `✅ Rejected & refunded #${withdrawalId}.`);
+    await bot.sendMessage(chatId, `✅ Rejected & refunded #${withdrawalId}.`);
     try {
       await bot.sendMessage(withdrawal.user_id,
-        `❌ *Withdrawal Rejected*\n\n` +
-        `Your \`${formatBalance(withdrawal.amount)}\` $YC has been refunded.\n` +
-        `Contact support if you have questions.`,
+        `❌ *Withdrawal Rejected*\n\nYour \`${formatBalance(withdrawal.amount)}\` $YC has been refunded.\nContact support if you have questions.`,
         { parse_mode: 'Markdown' }
       );
     } catch { }
+  }
+
+  // /approve_<id>  OR  /approve <id>
+  bot.onText(/\/approve[_ ](\d+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    await processApproval(msg.chat.id, parseInt(match[1]));
+  });
+
+  // /reject_<id>  OR  /reject <id>
+  bot.onText(/\/reject[_ ](\d+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    await processRejection(msg.chat.id, parseInt(match[1]));
   });
 
   // /pending — show pending withdrawals
