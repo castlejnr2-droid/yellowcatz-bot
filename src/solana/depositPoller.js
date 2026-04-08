@@ -9,7 +9,7 @@ const {
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const crypto = require('crypto');
-const { query } = require('../db');
+const { query, pool } = require('../db');
 require('dotenv').config();
 
 let connection;
@@ -241,41 +241,56 @@ async function pollDeposits(bot) {
 
           if (depositAmount <= 0) continue;
 
-          // Credit user
-          await query('BEGIN');
+          // Credit user (use a dedicated client so BEGIN/COMMIT are on the same connection)
+          const client = await pool.connect();
+          let credited = false;
           try {
-            await query(
+            await client.query('BEGIN');
+            await client.query(
               'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
               [user.telegram_id, depositAmount, sigInfo.signature, 'on-chain']
             );
-
-            await query(
+            await client.query(
               'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
               [depositAmount, user.telegram_id]
             );
-
-            await query('COMMIT');
-
+            await client.query('COMMIT');
+            credited = true;
             console.log(`[Deposit] Credited ${depositAmount} $YC to user ${user.telegram_id} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
-
-            // Notify via Telegram
-            if (bot) {
-              try {
-                const shortTx = sigInfo.signature.slice(0, 12) + '...' + sigInfo.signature.slice(-8);
-                await bot.sendMessage(user.telegram_id,
-                  `✅ *Deposit Received!*\n\n` +
-                  `Amount: \`${depositAmount.toLocaleString()}\` $YC\n` +
-                  `TX: \`${shortTx}\`\n\n` +
-                  `Tokens credited to your 💲 Spot Balance!`,
-                  { parse_mode: 'Markdown' }
-                );
-              } catch (e) {
-                console.error(`[Deposit] Failed to notify user ${user.telegram_id}:`, e.message);
-              }
-            }
           } catch (err) {
-            await query('ROLLBACK');
-            console.error(`[Deposit] Failed to credit user ${user.telegram_id}:`, err.message);
+            await client.query('ROLLBACK');
+            console.error(`[Deposit] Failed to credit user ${user.telegram_id}:`, err.message, err.stack || '');
+          } finally {
+            client.release();
+          }
+
+          if (!credited) continue;
+
+          // Auto-sweep: move tokens from user ATA to hot wallet
+          try {
+            const swept = await sweepUserATA(user.telegram_id);
+            if (swept) {
+              console.log(`[Deposit] Auto-swept ${swept.amount} $YC from user ${user.telegram_id} to hot wallet (tx: ${swept.signature.slice(0, 12)}...)`);
+            }
+          } catch (sweepErr) {
+            console.error(`[Deposit] Auto-sweep failed for user ${user.telegram_id}:`, sweepErr.message);
+            // Non-fatal: balance already credited, admin can sweep manually via /sweep_<id>
+          }
+
+          // Notify via Telegram
+          if (bot) {
+            try {
+              const shortTx = sigInfo.signature.slice(0, 12) + '...' + sigInfo.signature.slice(-8);
+              await bot.sendMessage(user.telegram_id,
+                `✅ *Deposit Received!*\n\n` +
+                `Amount: \`${depositAmount.toLocaleString()}\` $YC\n` +
+                `TX: \`${shortTx}\`\n\n` +
+                `Tokens credited to your 💲 Spot Balance!`,
+                { parse_mode: 'Markdown' }
+              );
+            } catch (e) {
+              console.error(`[Deposit] Failed to notify user ${user.telegram_id}:`, e.message);
+            }
           }
         }
 
@@ -304,11 +319,15 @@ async function pollDeposits(bot) {
  */
 function startDepositPoller(bot) {
   if (!process.env.YELLOWCATZ_TOKEN_MINT) {
-    console.log('[Deposit] YELLOWCATZ_TOKEN_MINT not set, skipping deposit poller.');
+    console.error('[Deposit] ⚠️  YELLOWCATZ_TOKEN_MINT is not set — deposit poller DISABLED. No deposits will be detected!');
+    return;
+  }
+  if (!process.env.SOLANA_PRIVATE_KEY) {
+    console.error('[Deposit] ⚠️  SOLANA_PRIVATE_KEY is not set — deposit poller DISABLED. Cannot derive user addresses!');
     return;
   }
 
-  console.log('[Deposit] Starting deposit poller (every 30 seconds)...');
+  console.log('[Deposit] Starting deposit poller (immediately + every 30 seconds)...');
 
   // Ensure deposits table exists
   query(`CREATE TABLE IF NOT EXISTS deposits (
@@ -320,7 +339,8 @@ function startDepositPoller(bot) {
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
 
-  // Poll every 30 seconds
+  // Run immediately on startup, then every 30 seconds
+  pollDeposits(bot).catch(err => console.error('[Deposit] Initial poll error:', err.message));
   const interval = setInterval(() => pollDeposits(bot), 30000);
   return interval;
 }
@@ -391,23 +411,26 @@ async function rescanUser(telegramId, bot) {
 
     if (depositAmount <= 0) continue;
 
-    // Credit
-    await query('BEGIN');
+    // Credit (dedicated client so BEGIN/COMMIT stay on one connection)
+    const client = await pool.connect();
     try {
-      await query(
+      await client.query('BEGIN');
+      await client.query(
         'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
         [String(telegramId), depositAmount, sigInfo.signature, 'on-chain']
       );
-      await query(
+      await client.query(
         'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
         [depositAmount, String(telegramId)]
       );
-      await query('COMMIT');
+      await client.query('COMMIT');
       credited.push({ amount: depositAmount, signature: sigInfo.signature });
       console.log(`[Rescan] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
     } catch (err) {
-      await query('ROLLBACK');
-      console.error(`[Rescan] Failed to credit:`, err.message);
+      await client.query('ROLLBACK');
+      console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
+    } finally {
+      client.release();
     }
   }
 
