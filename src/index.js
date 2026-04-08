@@ -3,7 +3,7 @@ process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.messa
 process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
 
 const { createBot } = require('./bot/bot');
-const { createServer } = require('./server/index');
+const { createServer, setWebhookBot } = require('./server/index');
 const { initSchema } = require('./db/index');
 
 async function main() {
@@ -12,7 +12,8 @@ async function main() {
   await initSchema();
 
   createServer();
-  createBot();
+  const bot = createBot();
+  setWebhookBot(bot); // wire bot into webhook handler for deposit notifications
 
   console.log('\n✅ YellowCatz is fully running!');
 }

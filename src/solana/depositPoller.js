@@ -660,4 +660,63 @@ async function debugUserDeposit(telegramId) {
   return out;
 }
 
-module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit };
+/**
+ * Sweep tokens from any ATA address to the hot wallet without using getAccount.
+ * Uses getTokenAccountBalance (works even for "closed"-status ATAs).
+ * Looks up the ATA owner via DB to derive the signing keypair.
+ * Returns { amount, signature, telegramId } or null if nothing to sweep.
+ */
+async function forceSweepATA(ataAddress) {
+  const conn = getConnection();
+  const wallet = getHotWallet();
+  const mint = getTokenMint();
+
+  if (!mintDecimals) {
+    const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    mintDecimals = mintInfo.decimals;
+  }
+
+  const ataPublicKey = new PublicKey(ataAddress);
+
+  // Use getTokenAccountBalance — works even on "closed"-status accounts
+  const balResp = await conn.getTokenAccountBalance(ataPublicKey, 'confirmed');
+  const rawBalance = Number(balResp.value.amount);
+  if (rawBalance === 0) return null;
+
+  // Find which user owns this ATA so we can derive the signing keypair
+  const userRes = await query('SELECT telegram_id FROM users WHERE deposit_ata = $1', [ataAddress]);
+  if (!userRes.rows[0]) throw new Error(`No user found in DB with ATA ${ataAddress}`);
+  const telegramId = userRes.rows[0].telegram_id;
+  const depositKeypair = getUserDepositKeypair(telegramId);
+
+  // Derive hot wallet ATA
+  const hotAta = getAssociatedTokenAddressSync(
+    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  const tx = new Transaction();
+
+  // Ensure hot wallet ATA exists
+  try {
+    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  } catch {
+    tx.add(createAssociatedTokenAccountInstruction(
+      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    ));
+  }
+
+  tx.add(createTransferCheckedInstruction(
+    ataPublicKey, mint, hotAta, depositKeypair.publicKey, BigInt(rawBalance), mintDecimals, [], TOKEN_2022_PROGRAM_ID
+  ));
+
+  const { blockhash } = await conn.getLatestBlockhash();
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  const sig = await sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]);
+  const uiAmount = rawBalance / Math.pow(10, mintDecimals);
+  console.log(`[ForceSweep] Swept ${uiAmount} $YC from ${ataAddress.slice(0, 8)}... to hot wallet (tx: ${sig})`);
+  return { amount: uiAmount, signature: sig, telegramId };
+}
+
+module.exports = { startDepositPoller, getOrCreateUserDepositATA, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit, forceSweepATA };

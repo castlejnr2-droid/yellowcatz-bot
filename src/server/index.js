@@ -4,6 +4,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const apiRoutes = require('./routes/api');
 const adminRoutes = require('./routes/admin');
+const { router: webhookRoutes, setBot: setWebhookBot } = require('./routes/webhook');
 require('dotenv').config();
 
 function createServer() {
@@ -23,6 +24,8 @@ function createServer() {
   // API routes
   app.use('/api', apiRoutes);
   app.use('/api/admin', adminRoutes);
+  // Webhook routes — NOT rate-limited, must be before SPA fallback
+  app.use('/api/webhook', webhookRoutes);
 
   // Serve index.html for all other routes (SPA fallback)
   app.get('*', (req, res) => {
@@ -37,4 +40,4 @@ function createServer() {
   return app;
 }
 
-module.exports = { createServer };
+module.exports = { createServer, setWebhookBot };

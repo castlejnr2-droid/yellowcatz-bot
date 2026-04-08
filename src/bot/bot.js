@@ -5,7 +5,7 @@ const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit } = require('../solana/depositPoller');
+const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit, forceSweepATA } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { pool } = require('../db');
 const { formatBalance } = require('./commands/start');
@@ -469,6 +469,30 @@ function createBot() {
         { parse_mode: 'Markdown' });
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /forcesweep <ataAddress> — sweep a specific ATA even if getAccount throws (admin only)
+  // Uses getTokenAccountBalance so it works on "closed"-status Token-2022 accounts
+  bot.onText(/\/forcesweep\s+(\S+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const ataAddress = match[1].trim();
+    await bot.sendMessage(msg.chat.id, `🔄 Force-sweeping ATA \`${ataAddress.slice(0, 12)}...\``, { parse_mode: 'Markdown' });
+    try {
+      const result = await forceSweepATA(ataAddress);
+      if (!result) {
+        return await bot.sendMessage(msg.chat.id, `✅ Nothing to sweep — ATA balance is 0.`);
+      }
+      await bot.sendMessage(msg.chat.id,
+        `✅ *Force Sweep Complete!*\n\n` +
+        `ATA: \`${ataAddress}\`\n` +
+        `User: \`${result.telegramId}\`\n` +
+        `Amount: \`${formatBalance(result.amount)}\` $YC\n` +
+        `TX: \`${result.signature}\``,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Force sweep failed: ${err.message}`);
     }
   });
 
