@@ -85,6 +85,23 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 
+-- House fee balance
+CREATE TABLE IF NOT EXISTS house_balance (
+  id SERIAL PRIMARY KEY,
+  balance DOUBLE PRECISION DEFAULT 0,
+  total_fees_collected DOUBLE PRECISION DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO house_balance (balance, total_fees_collected)
+SELECT 0, 0 WHERE NOT EXISTS (SELECT 1 FROM house_balance);
+
+-- Fee amount per battle
+DO $$ BEGIN
+  ALTER TABLE battles ADD COLUMN fee_amount DOUBLE PRECISION DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);

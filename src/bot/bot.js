@@ -558,6 +558,44 @@ function createBot() {
     );
   });
 
+  // /housefees — show house fee balance (admin only)
+  bot.onText(/\/housefees$/, async (msg) => {
+    if (!isAdmin(msg.from.id)) return;
+    try {
+      const house = await db.getHouseBalance();
+      await bot.sendMessage(msg.chat.id,
+        `🏠 *House Balance*\n\n` +
+        `💰 Current balance: \`${formatBalance(house.balance)}\` $YC\n` +
+        `📊 Total fees ever collected: \`${formatBalance(house.total_fees_collected)}\` $YC\n\n` +
+        `🔢 Use /housewithdraw <amount> to transfer to your Spot Balance`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Error: ${err.message}`);
+    }
+  });
+
+  // /housewithdraw <amount> — transfer from house balance to admin spot balance (admin only)
+  bot.onText(/\/housewithdraw\s+(\S+)/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const amount = parseFloat(match[1]);
+    if (isNaN(amount) || amount <= 0) {
+      return await bot.sendMessage(msg.chat.id, `❌ Usage: /housewithdraw <amount>`);
+    }
+    try {
+      const result = await db.withdrawFromHouse(amount, msg.from.id);
+      await bot.sendMessage(msg.chat.id,
+        `✅ *House Withdrawal*\n\n` +
+        `Withdrew \`${formatBalance(amount)}\` $YC from house balance\n` +
+        `Added to your 💲 Spot Balance\n` +
+        `Remaining house balance: \`${formatBalance(result.remainingBalance)}\` $YC`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ ${err.message}`);
+    }
+  });
+
   // /totalclaimed — ranked breakdown of tokens claimed per user (admin only)
   bot.onText(/\/totalclaimed$/, async (msg) => {
     if (!isAdmin(msg.from.id)) {

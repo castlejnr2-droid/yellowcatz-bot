@@ -218,6 +218,8 @@ async function acceptBattle(battleId, opponentId) {
 
   const winnerId = challengerRoll > opponentRoll ? battle.challenger_id : String(opponentId);
   const pot = battle.wager_amount * 2;
+  const fee = Math.floor(pot * 0.05);
+  const payout = pot - fee;
 
   const client = await pool.connect();
   try {
@@ -225,12 +227,16 @@ async function acceptBattle(battleId, opponentId) {
     await client.query('UPDATE users SET gamble_balance = gamble_balance - $1 WHERE telegram_id = $2',
       [battle.wager_amount, String(opponentId)]);
     await client.query('UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
-      [pot, winnerId]);
+      [payout, winnerId]);
     await client.query(`
       UPDATE battles SET opponent_id = $1, status = 'completed', winner_id = $2,
-      challenger_roll = $3, opponent_roll = $4, updated_at = NOW()
-      WHERE id = $5
-    `, [String(opponentId), winnerId, challengerRoll, opponentRoll, battleId]);
+        challenger_roll = $3, opponent_roll = $4, fee_amount = $5, updated_at = NOW()
+      WHERE id = $6
+    `, [String(opponentId), winnerId, challengerRoll, opponentRoll, fee, battleId]);
+    await client.query(`
+      UPDATE house_balance
+      SET balance = balance + $1, total_fees_collected = total_fees_collected + $1, updated_at = NOW()
+    `, [fee]);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
@@ -239,7 +245,8 @@ async function acceptBattle(battleId, opponentId) {
     client.release();
   }
 
-  return { ...battle, opponent_id: opponentId, winner_id: winnerId, challenger_roll: challengerRoll, opponent_roll: opponentRoll };
+  console.log(`[Battle] Battle #${battleId} finalized. Pot=${pot} Fee=${fee} Payout=${payout}`);
+  return { ...battle, opponent_id: opponentId, winner_id: winnerId, challenger_roll: challengerRoll, opponent_roll: opponentRoll, pot, fee, payout };
 }
 
 async function cancelBattle(battleId) {
@@ -409,6 +416,43 @@ async function getWithdrawalBreakdown() {
   return res.rows;
 }
 
+// ─── HOUSE BALANCE ───────────────────────────────────────────────────────────
+
+async function getHouseBalance() {
+  const res = await query('SELECT balance, total_fees_collected FROM house_balance LIMIT 1');
+  return res.rows[0] || { balance: 0, total_fees_collected: 0 };
+}
+
+async function withdrawFromHouse(amount, adminTelegramId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const houseRes = await client.query('SELECT balance FROM house_balance LIMIT 1 FOR UPDATE');
+    const currentBalance = parseFloat(houseRes.rows[0]?.balance || 0);
+    if (currentBalance < amount) {
+      throw new Error(`Insufficient house balance: ${currentBalance} $YC available`);
+    }
+    await client.query(
+      'UPDATE house_balance SET balance = balance - $1, updated_at = NOW()',
+      [amount]
+    );
+    await client.query(
+      'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [amount, String(adminTelegramId)]
+    );
+    const remainRes = await client.query('SELECT balance FROM house_balance LIMIT 1');
+    const remainingBalance = parseFloat(remainRes.rows[0]?.balance || 0);
+    await client.query('COMMIT');
+    console.log(`[House] Withdrew ${amount} $YC by admin ${adminTelegramId}. Remaining: ${remainingBalance}`);
+    return { remainingBalance };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 async function getStats() {
   const usersRes = await query('SELECT COUNT(*) as c FROM users');
   const collectedRes = await query('SELECT COALESCE(SUM(amount), 0) as s FROM collections');
@@ -430,5 +474,6 @@ module.exports = {
   getWithdrawalById, refundWithdrawal,
   createBattle, getOpenBattles, getBattleById, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
   creditReferral, getReferralStats, getUserByReferralCode,
-  getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats
+  getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats,
+  getHouseBalance, withdrawFromHouse
 };

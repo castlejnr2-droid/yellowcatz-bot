@@ -107,22 +107,30 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const opponentName = username ? `@${username}` : (firstName || 'Player 2');
   const winnerName = result.winner_id === String(telegramId) ? opponentName : challengerName;
   const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
-  const pot = battle.wager_amount;
+  const { pot, fee, payout } = result;
 
-  const resultText = `⚔️ PvP Battle Result!\n\n🏆 ${winnerName} won ${formatBalance(pot)} $YC!\n💀 ${loserName} lost ${formatBalance(pot)} $YC!`;
+  const resultText =
+    `⚔️ *Battle Result*\n\n` +
+    `🏆 Winner: *${winnerName}*\n` +
+    `💰 Prize: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
+    `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
+    `📊 Total pot was: \`${formatBalance(pot)}\` $YC`;
 
   if (messageId) {
-    try { await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId }); }
-    catch { await bot.sendMessage(chatId, resultText); }
+    try { await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }); }
+    catch { await bot.sendMessage(chatId, resultText, { parse_mode: 'Markdown' }); }
   } else {
-    await bot.sendMessage(chatId, resultText);
+    await bot.sendMessage(chatId, resultText, { parse_mode: 'Markdown' });
   }
 
   const challengerWon = result.winner_id === String(battle.challenger_id);
   try {
     await bot.sendMessage(battle.challenger_id,
-      `⚔️ ${opponentName} accepted your PvP challenge!\n\n` +
-      (challengerWon ? `🏆 You won ${formatBalance(pot)} $YC!` : `💀 You lost ${formatBalance(pot)} $YC!`)
+      `⚔️ *${opponentName} accepted your PvP challenge!*\n\n` +
+      (challengerWon
+        ? `🏆 You won \`${formatBalance(payout)}\` $YC! _(5% house fee deducted)_`
+        : `💀 You lost \`${formatBalance(battle.wager_amount)}\` $YC`),
+      { parse_mode: 'Markdown' }
     );
   } catch {}
 }
