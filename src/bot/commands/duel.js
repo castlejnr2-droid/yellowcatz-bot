@@ -11,20 +11,16 @@ function calcPayout(amount) {
 
 async function safeAnswerCb(bot, queryId, text, showAlert = false) {
   try {
-    if (text) {
-      await bot.answerCallbackQuery(queryId, { text, show_alert: showAlert });
-    } else {
-      await bot.answerCallbackQuery(queryId);
-    }
+    await bot.answerCallbackQuery(queryId, text ? { text, show_alert: showAlert } : {});
   } catch {}
 }
 
-async function safeEdit(bot, chatId, msgId, text) {
+// Edit a stored message; silently swallow errors (message may be too old, etc.)
+async function safeEdit(bot, chatId, msgId, text, opts = {}) {
+  if (!chatId || !msgId) return;
   try {
-    await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' });
-  } catch {
-    try { await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }); } catch {}
-  }
+    await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts });
+  } catch {}
 }
 
 // ── Create a direct challenge ─────────────────────────────────────────────────
@@ -72,55 +68,78 @@ async function handleDirectChallenge(bot, msg, targetUsername, amount) {
 
   // Lock challenger tokens and create challenge row
   const duel = await db.createDuelChallenge(challengerId, targetId, amount);
-  const { pot, fee, payout } = calcPayout(amount);
+  const { payout } = calcPayout(amount);
   const challengerName = challengerUsername ? `@${challengerUsername}` : (challengerFirst || 'Someone');
   const targetName = targetUser.username ? `@${targetUser.username}` : (targetUser.first_name || 'Opponent');
 
-  // Send DM to target
-  let targetMsgId = null;
-  try {
-    const targetMsg = await bot.sendMessage(targetId,
-      `⚔️ *Private Duel Challenge!*\n\n` +
-      `*${challengerName}* has challenged YOU specifically to a battle!\n\n` +
-      `💰 Amount: \`${formatBalance(amount)}\` $YC each\n` +
-      `🏆 Winner takes: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
-      `⏰ Expires in: 5 minutes`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '✅ Accept Challenge', callback_data: `accept_duel_${duel.id}` },
-            { text: '❌ Decline', callback_data: `decline_duel_${duel.id}` }
-          ]]
-        }
-      }
-    );
-    targetMsgId = targetMsg.message_id;
-  } catch {
-    // Can't DM target — cancel and refund
-    await db.cancelDuel(duel.id);
-    return await bot.sendMessage(chatId,
-      `❌ Couldn't reach *${targetName}* via DM. They need to start a private chat with the bot first.\n\nYour \`${formatBalance(amount)}\` $YC has been refunded.`,
-      { parse_mode: 'Markdown' }
-    );
-  }
-
-  // Send confirmation to challenger
-  const challengerMsg = await bot.sendMessage(chatId,
-    `⚔️ *Challenge Sent!*\n\n` +
-    `Your challenge to *${targetName}* for \`${formatBalance(amount)}\` $YC has been sent.\n` +
-    `⏰ Waiting for them to accept _(expires in 5 minutes)_`,
+  // 1. Post the challenge message IN THIS CHAT — always works (group or DM)
+  const challengeMsg = await bot.sendMessage(chatId,
+    `⚔️ *Direct Duel Challenge!*\n\n` +
+    `*${challengerName}* has challenged *${targetName}* to a battle!\n\n` +
+    `💰 Amount: \`${formatBalance(amount)}\` $YC each\n` +
+    `🏆 Winner takes: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
+    `⏰ Expires in 5 minutes\n\n` +
+    `${targetName} — tap below to respond!`,
     {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[
-          { text: '❌ Cancel Challenge', callback_data: `cancel_duel_${duel.id}` }
+          { text: '✅ Accept', callback_data: `accept_duel_${duel.id}` },
+          { text: '❌ Decline', callback_data: `decline_duel_${duel.id}` }
         ]]
       }
     }
   );
 
-  await db.setDuelMessageIds(duel.id, challengerMsg.message_id, targetMsgId);
+  // 2. Bonus: try to DM the target a heads-up notification (fire-and-forget, no buttons)
+  try {
+    await bot.sendMessage(targetId,
+      `⚔️ *You've been challenged to a duel!*\n\n` +
+      `*${challengerName}* challenged you to a \`${formatBalance(amount)}\` $YC battle.\n\n` +
+      `Go to the chat and tap *Accept* to respond!`,
+      { parse_mode: 'Markdown' }
+    );
+  } catch { /* target hasn't DM'd the bot — fine, they'll see it in the chat */ }
+
+  // 3. Send Cancel button to challenger — try DM first, fallback to same chat
+  let cancelMsgId = null;
+  let cancelChatId = null;
+  try {
+    const cancelMsg = await bot.sendMessage(challengerId,
+      `⚔️ *Challenge Sent!*\n\n` +
+      `Your challenge to *${targetName}* for \`${formatBalance(amount)}\` $YC is live.\n` +
+      `⏰ Waiting for them to accept _(expires in 5 minutes)_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Cancel Challenge', callback_data: `cancel_duel_${duel.id}` }
+          ]]
+        }
+      }
+    );
+    cancelMsgId = cancelMsg.message_id;
+    cancelChatId = challengerId; // private chat ID = user ID
+  } catch {
+    // Challenger DM failed — put the Cancel button in the same chat
+    try {
+      const cancelMsg = await bot.sendMessage(chatId,
+        `${challengerName} — use the button below if you want to cancel:`,
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '❌ Cancel Challenge', callback_data: `cancel_duel_${duel.id}` }
+            ]]
+          }
+        }
+      );
+      cancelMsgId = cancelMsg.message_id;
+      cancelChatId = chatId;
+    } catch {}
+  }
+
+  // Store: challenger_message_id = cancel msg, target_message_id = challenge msg
+  await db.setDuelMessageIds(duel.id, cancelMsgId, challengeMsg.message_id, chatId, cancelChatId);
 }
 
 // ── Accept ────────────────────────────────────────────────────────────────────
@@ -132,8 +151,15 @@ async function handleDuelAccept(bot, from, cbQuery, duelId) {
   if (!duel) {
     return await safeAnswerCb(bot, cbQuery.id, '❌ Challenge not found.', true);
   }
+
+  // Identity guards — specific error messages per spec
+  if (String(duel.challenger_id) === userId) {
+    return await safeAnswerCb(bot, cbQuery.id, '❌ You cannot accept your own challenge.', true);
+  }
   if (String(duel.target_id) !== userId) {
-    return await safeAnswerCb(bot, cbQuery.id, '❌ This challenge is not for you.', true);
+    const targetUser = await db.getUser(duel.target_id);
+    const targetName = targetUser?.username ? `@${targetUser.username}` : 'the intended recipient';
+    return await safeAnswerCb(bot, cbQuery.id, `❌ This challenge is for ${targetName} only.`, true);
   }
 
   const statusMessages = {
@@ -153,21 +179,21 @@ async function handleDuelAccept(bot, from, cbQuery, duelId) {
     );
   }
 
-  await safeAnswerCb(bot, cbQuery.id);
+  await safeAnswerCb(bot, cbQuery.id); // ACK before DB work
 
   const result = await db.acceptDuel(duelId);
   if (!result) {
-    return await bot.sendMessage(from.id, `❌ Challenge is no longer active.`);
+    return await safeAnswerCb(bot, cbQuery.id, '❌ Challenge is no longer active.', true);
   }
   if (result.insufficientBalance) {
+    // Race condition — balance changed between check and lock
     return await bot.sendMessage(from.id,
       `❌ You need \`${formatBalance(result.required)}\` $YC but only have \`${formatBalance(result.available)}\`.`,
       { parse_mode: 'Markdown' }
-    );
+    ).catch(() => {});
   }
 
   const { winnerId, challengerRoll, opponentRoll, pot, fee, payout } = result;
-
   const challengerUser = await db.getUser(duel.challenger_id);
   const challengerName = challengerUser?.username ? `@${challengerUser.username}` : (challengerUser?.first_name || 'Challenger');
   const opponentName = from.username ? `@${from.username}` : (from.first_name || 'Opponent');
@@ -181,15 +207,10 @@ async function handleDuelAccept(bot, from, cbQuery, duelId) {
     `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
     `📊 Total pot: \`${formatBalance(pot)}\` $YC`;
 
-  // Edit target's message (the one with the buttons)
-  await safeEdit(bot, from.id, cbQuery.message.message_id, resultText);
-
-  // Edit challenger's message
-  if (duel.challenger_message_id) {
-    await safeEdit(bot, duel.challenger_id, duel.challenger_message_id, resultText);
-  } else {
-    try { await bot.sendMessage(duel.challenger_id, resultText, { parse_mode: 'Markdown' }); } catch {}
-  }
+  // Edit the challenge message in the group chat
+  await safeEdit(bot, duel.challenge_chat_id, duel.target_message_id, resultText);
+  // Edit the cancel message
+  await safeEdit(bot, duel.cancel_chat_id, duel.challenger_message_id, resultText);
 }
 
 // ── Decline ───────────────────────────────────────────────────────────────────
@@ -201,8 +222,13 @@ async function handleDuelDecline(bot, from, cbQuery, duelId) {
   if (!duel) {
     return await safeAnswerCb(bot, cbQuery.id, '❌ Challenge not found.', true);
   }
+  if (String(duel.challenger_id) === userId) {
+    return await safeAnswerCb(bot, cbQuery.id, '❌ You cannot decline your own challenge. Use Cancel instead.', true);
+  }
   if (String(duel.target_id) !== userId) {
-    return await safeAnswerCb(bot, cbQuery.id, '❌ This challenge is not for you.', true);
+    const targetUser = await db.getUser(duel.target_id);
+    const targetName = targetUser?.username ? `@${targetUser.username}` : 'the intended recipient';
+    return await safeAnswerCb(bot, cbQuery.id, `❌ This challenge is for ${targetName} only.`, true);
   }
   if (duel.status !== 'pending') {
     return await safeAnswerCb(bot, cbQuery.id, 'Challenge is no longer active.', true);
@@ -213,22 +239,13 @@ async function handleDuelDecline(bot, from, cbQuery, duelId) {
 
   const targetName = from.username ? `@${from.username}` : (from.first_name || 'Opponent');
 
-  // Edit target's message
-  await safeEdit(bot, from.id, cbQuery.message.message_id,
-    `❌ *Duel Declined*\n\nYou declined the challenge.`
-  );
-
-  // Edit/notify challenger
-  const challengerText =
+  const declinedText =
     `❌ *Duel Declined*\n\n` +
-    `*${targetName}* declined your challenge of \`${formatBalance(duel.amount)}\` $YC.\n` +
-    `Your tokens have been refunded.`;
+    `*${targetName}* declined the challenge.\n` +
+    `\`${formatBalance(duel.amount)}\` $YC has been refunded to the challenger.`;
 
-  if (duel.challenger_message_id) {
-    await safeEdit(bot, duel.challenger_id, duel.challenger_message_id, challengerText);
-  } else {
-    try { await bot.sendMessage(duel.challenger_id, challengerText, { parse_mode: 'Markdown' }); } catch {}
-  }
+  await safeEdit(bot, duel.challenge_chat_id, duel.target_message_id, declinedText);
+  await safeEdit(bot, duel.cancel_chat_id, duel.challenger_message_id, declinedText);
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────────
@@ -250,17 +267,13 @@ async function handleDuelCancel(bot, from, cbQuery, duelId) {
   await safeAnswerCb(bot, cbQuery.id);
   await db.cancelDuel(duelId);
 
-  // Edit challenger's message
-  await safeEdit(bot, from.id, cbQuery.message.message_id,
-    `❌ *Challenge Cancelled*\n\nYour \`${formatBalance(duel.amount)}\` $YC has been refunded.`
-  );
+  const cancelledText =
+    `❌ *Challenge Cancelled*\n\n` +
+    `The challenger cancelled this duel.\n` +
+    `\`${formatBalance(duel.amount)}\` $YC has been refunded.`;
 
-  // Edit target's message
-  if (duel.target_message_id) {
-    await safeEdit(bot, duel.target_id, duel.target_message_id,
-      `❌ *Challenge Cancelled*\n\nThe challenger cancelled this duel.`
-    );
-  }
+  await safeEdit(bot, duel.challenge_chat_id, duel.target_message_id, cancelledText);
+  await safeEdit(bot, duel.cancel_chat_id, duel.challenger_message_id, cancelledText);
 }
 
 // ── Expiry background job ─────────────────────────────────────────────────────
@@ -275,19 +288,11 @@ async function startDuelExpiryJob(bot) {
 
           const expiryText =
             `⏰ *Duel Expired*\n\n` +
-            `Your challenge of \`${formatBalance(duel.amount)}\` $YC has expired. Tokens refunded.`;
+            `The challenge has expired.\n` +
+            `\`${formatBalance(duel.amount)}\` $YC has been refunded to the challenger.`;
 
-          if (duel.challenger_message_id) {
-            await safeEdit(bot, duel.challenger_id, duel.challenger_message_id, expiryText);
-          } else {
-            try { await bot.sendMessage(duel.challenger_id, expiryText, { parse_mode: 'Markdown' }); } catch {}
-          }
-
-          if (duel.target_message_id) {
-            await safeEdit(bot, duel.target_id, duel.target_message_id,
-              `⏰ *Duel Expired*\n\nThe challenge has expired.`
-            );
-          }
+          await safeEdit(bot, duel.challenge_chat_id, duel.target_message_id, expiryText);
+          await safeEdit(bot, duel.cancel_chat_id, duel.challenger_message_id, expiryText);
         } catch (err) {
           console.error(`[Duel] Error expiring duel #${duel.id}:`, err.message);
         }

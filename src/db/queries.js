@@ -459,10 +459,15 @@ async function getDuelChallenge(id) {
   return res.rows[0] || null;
 }
 
-async function setDuelMessageIds(id, challengerMsgId, targetMsgId) {
+async function setDuelMessageIds(id, cancelMsgId, challengeMsgId, challengeChatId, cancelChatId) {
   await query(
-    'UPDATE duel_challenges SET challenger_message_id = $1, target_message_id = $2 WHERE id = $3',
-    [challengerMsgId, targetMsgId, id]
+    `UPDATE duel_challenges
+     SET challenger_message_id = $1,
+         target_message_id     = $2,
+         challenge_chat_id     = $3,
+         cancel_chat_id        = $4
+     WHERE id = $5`,
+    [cancelMsgId, challengeMsgId, String(challengeChatId), String(cancelChatId), id]
   );
 }
 

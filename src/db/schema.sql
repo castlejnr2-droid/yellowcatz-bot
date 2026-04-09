@@ -165,3 +165,15 @@ CREATE TABLE IF NOT EXISTS duel_challenges (
 CREATE INDEX IF NOT EXISTS idx_duel_challenger ON duel_challenges(challenger_id);
 CREATE INDEX IF NOT EXISTS idx_duel_target ON duel_challenges(target_id);
 CREATE INDEX IF NOT EXISTS idx_duel_status ON duel_challenges(status);
+
+-- Chat where the main challenge (Accept/Decline) message lives
+DO $$ BEGIN
+  ALTER TABLE duel_challenges ADD COLUMN challenge_chat_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Chat where the Cancel button message lives (DM or same group)
+DO $$ BEGIN
+  ALTER TABLE duel_challenges ADD COLUMN cancel_chat_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
