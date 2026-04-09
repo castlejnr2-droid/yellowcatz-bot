@@ -16,6 +16,7 @@ require('dotenv').config();
 
 let connection;
 let hotWallet;
+let hotWalletPublicKey;
 let tokenMint;
 let mintDecimals;
 
@@ -43,6 +44,20 @@ function getTokenMint() {
     tokenMint = new PublicKey(mint);
   }
   return tokenMint;
+}
+
+/**
+ * Returns the PublicKey of HOT_WALLET_ADDRESS — the actual destination for swept tokens.
+ * This is distinct from the PRIVATE_KEY signing keypair (which pays fees and derives
+ * child deposit keypairs but does NOT receive the swept tokens).
+ */
+function getHotWalletAddress() {
+  if (!hotWalletPublicKey) {
+    const addr = process.env.HOT_WALLET_ADDRESS;
+    if (!addr) throw new Error('HOT_WALLET_ADDRESS not set');
+    hotWalletPublicKey = new PublicKey(addr);
+  }
+  return hotWalletPublicKey;
 }
 
 /**
@@ -388,7 +403,7 @@ async function sweepUserATA(telegramId) {
   }
 
   const hotAta = getAssociatedTokenAddressSync(
-    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    mint, getHotWalletAddress(), false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   const tx = new Transaction();
@@ -396,7 +411,7 @@ async function sweepUserATA(telegramId) {
     await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
-      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+      wallet.publicKey, hotAta, getHotWalletAddress(), mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
     ));
   }
 
@@ -517,14 +532,14 @@ async function sweepAll(bot) {
 
       // Sweep tokens to hot wallet
       const hotAta = getAssociatedTokenAddressSync(
-        mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+        mint, getHotWalletAddress(), false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       );
       const tx = new Transaction();
       try {
         await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
       } catch {
         tx.add(createAssociatedTokenAccountInstruction(
-          wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+          wallet.publicKey, hotAta, getHotWalletAddress(), mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
         ));
       }
       tx.add(createTransferCheckedInstruction(
@@ -837,7 +852,7 @@ async function forceSweepATA(ataAddress) {
   }
 
   const hotAta = getAssociatedTokenAddressSync(
-    mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+    mint, getHotWalletAddress(), false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
   const tx = new Transaction();
@@ -845,7 +860,7 @@ async function forceSweepATA(ataAddress) {
     await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
-      wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+      wallet.publicKey, hotAta, getHotWalletAddress(), mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
     ));
   }
 
