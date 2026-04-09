@@ -47,24 +47,55 @@ router.post('/helius', (req, res, next) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
   const mintAddress = process.env.YELLOWCATZ_TOKEN_MINT;
 
+  console.log(`[Webhook] Processing ${events.length} event(s) | YELLOWCATZ_TOKEN_MINT=${mintAddress || 'NOT SET'}`);
+
+  // Dump the raw payload of the first event so we can verify field names
+  if (events[0]) {
+    const e0 = events[0];
+    console.log(`[Webhook] RAW event[0] keys: ${Object.keys(e0).join(', ')}`);
+    console.log(`[Webhook] event[0].type=${e0.type} | signature=${String(e0.signature || '').slice(0, 16)}...`);
+    const transfers = e0.tokenTransfers || e0.token_transfers || [];
+    console.log(`[Webhook] event[0].tokenTransfers count: ${transfers.length}`);
+    if (transfers[0]) {
+      console.log(`[Webhook] tokenTransfers[0] keys: ${Object.keys(transfers[0]).join(', ')}`);
+      console.log(`[Webhook] tokenTransfers[0] = ${JSON.stringify(transfers[0])}`);
+    }
+  }
+
   for (const event of events) {
     try {
       const signature = event.signature;
-      const transfers = event.tokenTransfers || [];
+      const transfers = event.tokenTransfers || event.token_transfers || [];
 
       for (const transfer of transfers) {
         // Only care about transfers of our token into a token account
-        if (transfer.mint !== mintAddress) continue;
+        if (transfer.mint !== mintAddress) {
+          console.log(`[Webhook] SKIP transfer — mint mismatch: got=${transfer.mint} want=${mintAddress}`);
+          continue;
+        }
         const ataAddress = transfer.toTokenAccount;
         const amount = Number(transfer.tokenAmount);
-        if (!ataAddress || !amount || amount <= 0) continue;
+        if (!ataAddress || !amount || amount <= 0) {
+          console.log(`[Webhook] SKIP transfer — invalid ataAddress=${ataAddress} amount=${amount}`);
+          continue;
+        }
+
+        console.log(`[Webhook] Matched transfer: to=${ataAddress} amount=${amount} mint=${transfer.mint}`);
 
         // Find which user owns this ATA
         const userRes = await query(
           'SELECT telegram_id FROM users WHERE deposit_ata = $1',
           [ataAddress]
         );
-        if (!userRes.rows[0]) continue; // Not one of our ATAs
+        if (!userRes.rows[0]) {
+          console.log(`[Webhook] SKIP — no user in DB with deposit_ata=${ataAddress}`);
+          // Log nearby ATAs to catch near-misses (old vs new address after migration)
+          const nearby = await query(
+            'SELECT telegram_id, deposit_ata FROM users WHERE deposit_ata IS NOT NULL LIMIT 5'
+          );
+          console.log(`[Webhook] Sample DB deposit_ata values: ${nearby.rows.map(r => r.deposit_ata).join(', ')}`);
+          continue;
+        }
 
         const telegramId = userRes.rows[0].telegram_id;
 
