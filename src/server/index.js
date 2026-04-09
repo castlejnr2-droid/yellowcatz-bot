@@ -14,18 +14,22 @@ function createServer() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Rate limiting
+  // Rate limiting — explicitly excludes /api/webhook (Helius retries need unthrottled access)
   const limiter = rateLimit({ windowMs: 60 * 1000, max: 100 });
-  app.use('/api/', limiter);
+  app.use('/api/', (req, res, next) => {
+    if (req.path.startsWith('/webhook')) return next(); // bypass rate limiter
+    return limiter(req, res, next);
+  });
 
   // Static files (website)
   app.use(express.static(path.join(__dirname, '../../public')));
 
+  // Webhook routes — mounted before other API routes, never rate-limited
+  app.use('/api/webhook', webhookRoutes);
+
   // API routes
   app.use('/api', apiRoutes);
   app.use('/api/admin', adminRoutes);
-  // Webhook routes — NOT rate-limited, must be before SPA fallback
-  app.use('/api/webhook', webhookRoutes);
 
   // Serve index.html for all other routes (SPA fallback)
   app.get('*', (req, res) => {

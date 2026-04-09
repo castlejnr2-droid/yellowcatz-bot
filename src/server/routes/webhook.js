@@ -10,8 +10,14 @@ function setBot(bot) { _bot = bot; }
 // Helius sends the value of your authHeader field in the Authorization header
 function verifyHelius(req, res, next) {
   const secret = process.env.HELIUS_WEBHOOK_SECRET;
-  if (secret && req.headers['authorization'] !== secret) {
-    console.warn('[Webhook] Rejected unauthorized request from', req.ip);
+  const received = req.headers['authorization'];
+
+  if (secret && received !== secret) {
+    console.warn(
+      `[Webhook] Auth FAILED from ${req.ip}` +
+      ` — expected secret (${secret.length} chars),` +
+      ` got: ${received ? `"${received.slice(0, 8)}..." (${received.length} chars)` : 'MISSING'}`
+    );
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
@@ -24,7 +30,17 @@ function verifyHelius(req, res, next) {
  * touches a monitored address (the token mint). We filter for transfers into
  * known user ATAs, credit the user, then sweep to hot wallet.
  */
-router.post('/helius', verifyHelius, async (req, res) => {
+router.post('/helius', (req, res, next) => {
+  const auth = req.headers['authorization'];
+  console.log(
+    `[Webhook] Incoming POST /api/webhook/helius` +
+    ` | ip=${req.ip}` +
+    ` | auth=${auth ? `present (${auth.length} chars)` : 'MISSING'}` +
+    ` | content-type=${req.headers['content-type'] || 'none'}` +
+    ` | body-events=${Array.isArray(req.body) ? req.body.length : (req.body ? 1 : 0)}`
+  );
+  next();
+}, verifyHelius, async (req, res) => {
   // Acknowledge immediately — Helius retries on non-2xx for up to 24 hours
   res.json({ ok: true });
 
