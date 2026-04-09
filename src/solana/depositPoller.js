@@ -1,4 +1,4 @@
-const { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
@@ -28,8 +28,9 @@ function getConnection() {
 
 function getHotWallet() {
   if (!hotWallet) {
-    if (!process.env.SOLANA_PRIVATE_KEY) throw new Error('SOLANA_PRIVATE_KEY not set');
-    const secretKey = bs58.decode(process.env.SOLANA_PRIVATE_KEY);
+    const key = process.env.PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY;
+    if (!key) throw new Error('PRIVATE_KEY not set');
+    const secretKey = bs58.decode(key);
     hotWallet = Keypair.fromSecretKey(secretKey);
   }
   return hotWallet;
@@ -37,8 +38,9 @@ function getHotWallet() {
 
 function getTokenMint() {
   if (!tokenMint) {
-    if (!process.env.YELLOWCATZ_TOKEN_MINT) throw new Error('YELLOWCATZ_TOKEN_MINT not set');
-    tokenMint = new PublicKey(process.env.YELLOWCATZ_TOKEN_MINT);
+    const mint = process.env.YC_TOKEN_MINT || process.env.YELLOWCATZ_TOKEN_MINT;
+    if (!mint) throw new Error('YC_TOKEN_MINT not set');
+    tokenMint = new PublicKey(mint);
   }
   return tokenMint;
 }
@@ -102,16 +104,31 @@ async function ensureDepositATA(telegramId) {
 
   console.log(`[Deposit] Creating ATA for user ${telegramId}...`);
 
-  const ix = createAssociatedTokenAccountInstruction(
+  const SOL_FEE_BUFFER = 0.001 * LAMPORTS_PER_SOL;
+
+  // Check if deposit keypair already has SOL (e.g. from a prior run)
+  const existingSol = await conn.getBalance(depositKeypair.publicKey, 'confirmed');
+
+  const tx = new Transaction();
+
+  // Send SOL fee buffer to deposit keypair if it doesn't have enough
+  if (existingSol < SOL_FEE_BUFFER) {
+    tx.add(SystemProgram.transfer({
+      fromPubkey: wallet.publicKey,
+      toPubkey: depositKeypair.publicKey,
+      lamports: SOL_FEE_BUFFER - existingSol,
+    }));
+  }
+
+  tx.add(createAssociatedTokenAccountInstruction(
     wallet.publicKey,         // payer
     ataAddress,               // ATA to create
     depositKeypair.publicKey, // owner
     mint,                     // mint
     TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
-  );
+  ));
 
-  const tx = new Transaction().add(ix);
   const { blockhash } = await conn.getLatestBlockhash();
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
@@ -334,16 +351,16 @@ async function pollDeposits(bot) {
  * Start the deposit polling loop
  */
 function startDepositPoller(bot) {
-  if (!process.env.YELLOWCATZ_TOKEN_MINT) {
-    console.error('[Deposit] ⚠️  YELLOWCATZ_TOKEN_MINT is not set — deposit poller DISABLED. No deposits will be detected!');
+  if (!process.env.YC_TOKEN_MINT && !process.env.YELLOWCATZ_TOKEN_MINT) {
+    console.error('[Deposit] ⚠️  YC_TOKEN_MINT is not set — deposit poller DISABLED. No deposits will be detected!');
     return;
   }
-  if (!process.env.SOLANA_PRIVATE_KEY) {
-    console.error('[Deposit] ⚠️  SOLANA_PRIVATE_KEY is not set — deposit poller DISABLED. Cannot derive user addresses!');
+  if (!process.env.PRIVATE_KEY && !process.env.SOLANA_PRIVATE_KEY) {
+    console.error('[Deposit] ⚠️  PRIVATE_KEY is not set — deposit poller DISABLED. Cannot derive user addresses!');
     return;
   }
 
-  console.log('[Deposit] Starting deposit poller (immediately + every 30 seconds)...');
+  console.log('[Deposit] Starting deposit poller (webhook-first; backup poll every 5 minutes)...');
 
   // Ensure deposits table exists
   query(`CREATE TABLE IF NOT EXISTS deposits (
@@ -355,9 +372,9 @@ function startDepositPoller(bot) {
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
 
-  // Run immediately on startup, then every 30 seconds
+  // Run immediately on startup, then every 5 minutes (webhook is primary detection path)
   pollDeposits(bot).catch(err => console.error('[Deposit] Initial poll error:', err.message));
-  const interval = setInterval(() => pollDeposits(bot), 30000);
+  const interval = setInterval(() => pollDeposits(bot), 5 * 60 * 1000);
   return interval;
 }
 

@@ -94,3 +94,26 @@ CREATE INDEX IF NOT EXISTS idx_battles_challenger ON battles(challenger_id);
 CREATE INDEX IF NOT EXISTS idx_battles_status ON battles(status);
 CREATE INDEX IF NOT EXISTS idx_deposits_user_id ON deposits(user_id);
 CREATE INDEX IF NOT EXISTS idx_deposits_tx_signature ON deposits(tx_signature);
+
+-- Add swept tracking columns to deposits
+DO $$ BEGIN
+  ALTER TABLE deposits ADD COLUMN swept BOOLEAN DEFAULT FALSE;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE deposits ADD COLUMN swept_at TIMESTAMPTZ;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Deposit wallets: tracks per-user deposit addresses and fee funding state
+CREATE TABLE IF NOT EXISTS deposit_wallets (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(telegram_id),
+  deposit_address TEXT NOT NULL UNIQUE,
+  derivation_index INTEGER DEFAULT 0,
+  fee_funded BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deposit_wallets_user_id ON deposit_wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_deposit_wallets_address ON deposit_wallets(deposit_address);

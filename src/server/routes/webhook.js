@@ -49,7 +49,7 @@ router.post('/helius', (req, res, next) => {
   res.json({ ok: true });
 
   const events = Array.isArray(req.body) ? req.body : [req.body];
-  const mintAddress = process.env.YELLOWCATZ_TOKEN_MINT;
+  const mintAddress = process.env.YC_TOKEN_MINT || process.env.YELLOWCATZ_TOKEN_MINT;
 
   console.log(`[Webhook] Processing ${events.length} event(s) | mint=${mintAddress || 'NOT SET'}`);
 
