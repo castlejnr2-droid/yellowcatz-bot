@@ -5,7 +5,7 @@ const { handleBattleCommand } = require('./commands/battle');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit, forceSweepATA } = require('../solana/depositPoller');
+const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit, forceSweepATA, creditDepositsBySignatures, getUserDepositAddress } = require('../solana/depositPoller');
 const db = require('../db/queries');
 const { pool } = require('../db');
 const { formatBalance } = require('./commands/start');
@@ -475,7 +475,7 @@ function createBot() {
     if (!isAdmin(msg.from.id)) return;
     await bot.sendMessage(msg.chat.id, `🔄 Sweeping all user ATAs to hot wallet...`);
     try {
-      const results = await sweepAll();
+      const results = await sweepAll(bot);
       if (results.length === 0) {
         return await bot.sendMessage(msg.chat.id, `✅ Nothing to sweep — all ATAs are empty.`);
       }
@@ -492,15 +492,25 @@ function createBot() {
     }
   });
 
-  // /sweep_<telegramId> — sweep a single user's ATA (admin only)
+  // /sweep_<telegramId> — credit + sweep a single user's ATA (admin only)
   bot.onText(/\/sweep_(\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const targetId = match[1];
-    await bot.sendMessage(msg.chat.id, `🔄 Sweeping ATA for user ${targetId}...`);
+    await bot.sendMessage(msg.chat.id, `🔄 Processing deposit + sweep for user ${targetId}...`);
     try {
+      // Credit any unprocessed deposits (real sig dedup) and notify user
+      let userAta;
+      try {
+        userAta = getUserDepositAddress(targetId);
+        await creditDepositsBySignatures(targetId, userAta, bot);
+      } catch (creditErr) {
+        console.error(`[Sweep] creditDepositsBySignatures failed for user ${targetId}:`, creditErr.message);
+      }
+
+      // Sweep remaining on-chain balance to hot wallet
       const result = await sweepUserATA(targetId);
       if (!result) {
-        return await bot.sendMessage(msg.chat.id, `✅ Nothing to sweep — ATA empty or doesn't exist.`);
+        return await bot.sendMessage(msg.chat.id, `✅ Deposits credited. ATA empty or already swept.`);
       }
       await bot.sendMessage(msg.chat.id,
         `✅ *Swept ${formatBalance(result.amount)} $YC* from user ${targetId}\nTX: \`${result.signature}\``,

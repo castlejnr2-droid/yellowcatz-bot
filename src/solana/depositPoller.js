@@ -248,6 +248,99 @@ async function getOrCreateUserDepositATA(telegramId) {
   return currentAddress;
 }
 
+/**
+ * Credit a user for any unprocessed deposit transactions in their ATA's history.
+ * Uses real on-chain transaction signatures — the single source of truth for dedup.
+ * Returns total amount newly credited.
+ */
+async function creditDepositsBySignatures(telegramId, ataAddress, bot) {
+  const conn = getConnection();
+  await ensureMintDecimals();
+
+  const ataPublicKey = new PublicKey(ataAddress);
+  let signatures;
+  try {
+    signatures = await rpcCallWithRetry(() => conn.getSignaturesForAddress(ataPublicKey, { limit: 10 }));
+  } catch (err) {
+    console.error(`[Deposit] getSignaturesForAddress failed for ${ataAddress.slice(0, 8)}...:`, err.message);
+    return 0;
+  }
+
+  if (signatures.length === 0) return 0;
+
+  let totalCredited = 0;
+
+  for (const sigInfo of signatures.reverse()) {
+    if (sigInfo.err) continue;
+
+    const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
+    if (already.rows.length > 0) continue;
+
+    const tx = await rpcCallWithRetry(() => conn.getTransaction(sigInfo.signature, {
+      maxSupportedTransactionVersion: 0,
+      commitment: 'confirmed',
+    }));
+    if (!tx || !tx.meta) continue;
+
+    const preBalances = tx.meta.preTokenBalances || [];
+    const postBalances = tx.meta.postTokenBalances || [];
+    const accountKeys = tx.transaction.message.staticAccountKeys || tx.transaction.message.accountKeys;
+    const ataIndex = accountKeys.findIndex(k => {
+      const addr = typeof k === 'string' ? k : k.toBase58();
+      return addr === ataAddress;
+    });
+    if (ataIndex === -1) continue;
+
+    const preBal = preBalances.find(b => b.accountIndex === ataIndex);
+    const postBal = postBalances.find(b => b.accountIndex === ataIndex);
+    if (!postBal) continue;
+
+    const preAmount = preBal ? parseFloat(preBal.uiTokenAmount.uiAmount || 0) : 0;
+    const postAmount = parseFloat(postBal.uiTokenAmount.uiAmount || 0);
+    const depositAmount = postAmount - preAmount;
+    if (depositAmount <= 0) continue;
+
+    const client = await pool.connect();
+    let credited = false;
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+        [String(telegramId), depositAmount, sigInfo.signature, ataAddress]
+      );
+      await client.query(
+        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+        [depositAmount, String(telegramId)]
+      );
+      await client.query('COMMIT');
+      credited = true;
+      totalCredited += depositAmount;
+      console.log(`[Deposit] Credited ${depositAmount} $YC to user ${telegramId} (tx: ${sigInfo.signature.slice(0, 12)}...)`);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      if (!err.message?.includes('duplicate key') && !err.message?.includes('unique constraint')) {
+        console.error(`[Deposit] Credit failed for user ${telegramId}:`, err.message);
+      }
+    } finally {
+      client.release();
+    }
+
+    if (credited && bot) {
+      try {
+        const shortTx = sigInfo.signature.slice(0, 12) + '...' + sigInfo.signature.slice(-8);
+        await bot.sendMessage(telegramId,
+          `✅ *Deposit Received!*\n\nAmount: \`${depositAmount.toLocaleString()}\` $YC\nTX: \`${shortTx}\`\n\nTokens credited to your 💲 Spot Balance!`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (e) {
+        console.error(`[Deposit] Failed to notify user ${telegramId}:`, e.message);
+      }
+    }
+  }
+
+  return totalCredited;
+}
+
 // Track last processed signature per user ATA
 const lastProcessedSig = new Map();
 
@@ -495,47 +588,8 @@ async function sweepAll(bot) {
         console.error(`[Sweep] SOL fund failed for user ${telegramId} — proceeding anyway:`, fundErr.message);
       }
 
-      // Credit user for any tokens not yet credited from this ATA
-      const alreadyRes = await query(
-        `SELECT COALESCE(SUM(amount), 0) AS total FROM deposits WHERE user_id = $1 AND from_address = $2`,
-        [String(telegramId), ataAddress]
-      );
-      const alreadyCreditedRaw = Math.round(
-        (parseFloat(alreadyRes.rows[0].total) || 0) * Math.pow(10, mintDecimals)
-      );
-      const uncreditedRaw = rawBalance - alreadyCreditedRaw;
-
-      if (uncreditedRaw > 0) {
-        const uncreditedAmount = uncreditedRaw / Math.pow(10, mintDecimals);
-        const syntheticSig = `sweep_recovery:${ataAddress}:${Date.now()}`;
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          await client.query(
-            'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-            [String(telegramId), uncreditedAmount, syntheticSig, ataAddress]
-          );
-          await client.query(
-            'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-            [uncreditedAmount, String(telegramId)]
-          );
-          await client.query('COMMIT');
-          console.log(`[Sweep] Credited missing ${uncreditedAmount} $YC to user ${telegramId}`);
-          if (bot) {
-            try {
-              await bot.sendMessage(telegramId,
-                `✅ *Deposit Credited!*\n\n\`${uiAmount.toLocaleString()}\` $YC has been added to your 💲 Spot Balance.`,
-                { parse_mode: 'Markdown' }
-              );
-            } catch {}
-          }
-        } catch (creditErr) {
-          await client.query('ROLLBACK');
-          console.error(`[Sweep] Credit failed for user ${telegramId}:`, creditErr.message);
-        } finally {
-          client.release();
-        }
-      }
+      // Credit user for any unprocessed deposit txs using real tx signatures (dedup-safe)
+      await creditDepositsBySignatures(String(telegramId), ataAddress, bot);
 
       // Sweep tokens to hot wallet
       const hotAta = getAssociatedTokenAddressSync(
@@ -682,26 +736,10 @@ async function rescanUser(telegramId, bot) {
     const uncreditedAmount = uncreditedRaw / Math.pow(10, mintDecimals);
     console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0, 8)}...: ${onChainBalance} on-chain, ${alreadyCredited} already credited — crediting ${uncreditedAmount}`);
 
-    const syntheticSig = `balance_rescan:${ataAddress}:${Date.now()}`;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(
-        'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-        [String(telegramId), uncreditedAmount, syntheticSig, ataAddress]
-      );
-      await client.query(
-        'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-        [uncreditedAmount, String(telegramId)]
-      );
-      await client.query('COMMIT');
-      credited.push({ amount: uncreditedAmount, signature: syntheticSig });
-      console.log(`[Rescan] Credited ${uncreditedAmount} $YC to user ${telegramId} from ATA ${ataAddress.slice(0, 8)}...`);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(`[Rescan] Failed to credit:`, err.message, err.stack || '');
-    } finally {
-      client.release();
+    const creditedAmount = await creditDepositsBySignatures(String(telegramId), ataAddress, bot);
+    if (creditedAmount > 0) {
+      credited.push({ amount: creditedAmount, signature: `credited:${ataAddress}` });
+      console.log(`[Rescan] Credited ${creditedAmount} $YC to user ${telegramId} from ATA ${ataAddress.slice(0, 8)}...`);
     }
   }
 
@@ -891,6 +929,7 @@ async function forceSweepATA(ataAddress) {
 module.exports = {
   startDepositPoller,
   getOrCreateUserDepositATA,
+  getUserDepositAddress,
   sweepUserATA,
   sweepAll,
   findUserByATA,
@@ -900,4 +939,5 @@ module.exports = {
   forceSweepATA,
   recoverDepositWallets,
   fundDepositWalletIfNeeded,
+  creditDepositsBySignatures,
 };
