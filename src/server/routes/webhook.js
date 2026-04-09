@@ -51,41 +51,49 @@ async function creditAndSweep(telegramId, amount, signature, fromAddress) {
     return false;
   }
 
+  // ── Credit ─────────────────────────────────────────────────────────────────
+  console.log(`[Webhook] Crediting userId=${telegramId} with amount=${amount} from=${fromAddress}`);
+
   const client = await pool.connect();
   let credited = false;
+  let newBalance = null;
   try {
     await client.query('BEGIN');
     await client.query(
       'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
       [telegramId, amount, signature, fromAddress]
     );
-    await client.query(
-      'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+    const balRes = await client.query(
+      'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2 RETURNING spot_balance',
       [amount, telegramId]
     );
     await client.query('COMMIT');
     credited = true;
-    console.log(`[Webhook] Matched deposit: userId=${telegramId} amount=${amount} address=${fromAddress}`);
+    newBalance = balRes.rows[0]?.spot_balance;
+    console.log(`[Webhook] Credit SUCCESS userId=${telegramId} new balance=${newBalance}`);
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(`[Webhook] Failed to credit user ${telegramId}:`, err.message);
+    console.error(`[Webhook] Credit FAILED userId=${telegramId} error=${err.message}`);
   } finally {
     client.release();
   }
 
   if (!credited) return false;
 
-  // Auto-sweep to hot wallet
+  // ── Sweep ──────────────────────────────────────────────────────────────────
+  console.log(`[Webhook] Sweep attempt for userId=${telegramId} address=${fromAddress}`);
   try {
     const swept = await sweepUserATA(telegramId);
     if (swept) {
-      console.log(`[Webhook] Auto-swept ${swept.amount} $YC from user ${telegramId} (tx: ${swept.signature.slice(0, 12)}...)`);
+      console.log(`[Webhook] Sweep SUCCESS userId=${telegramId} amount=${swept.amount} tx=${swept.signature.slice(0, 16)}...`);
+    } else {
+      console.log(`[Webhook] Sweep skipped for userId=${telegramId} (ATA empty or not found)`);
     }
   } catch (sweepErr) {
-    console.error(`[Webhook] Auto-sweep failed for user ${telegramId}:`, sweepErr.message);
+    console.error(`[Webhook] Sweep FAILED userId=${telegramId} error=${sweepErr.message}`, sweepErr.stack || '');
   }
 
-  // Notify user
+  // ── Notify ─────────────────────────────────────────────────────────────────
   if (_bot) {
     try {
       const shortTx = signature.slice(0, 12) + '...' + signature.slice(-8);

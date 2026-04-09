@@ -46,13 +46,36 @@ function getTokenMint() {
 }
 
 /**
+ * Retry wrapper for all Solana RPC calls.
+ * On HTTP 429 (rate limit), backs off exponentially and retries up to maxRetries times.
+ * All other errors are rethrown immediately.
+ */
+async function rpcCallWithRetry(fn, maxRetries = 5) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err?.message || '';
+      if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('rate limit')) {
+        const delay = Math.min(2000 * Math.pow(2, i), 30000);
+        console.log(`[RPC] Rate limited, waiting ${delay}ms before retry ${i + 1}/${maxRetries}`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error('Max RPC retries exceeded');
+}
+
+/**
  * Cache and return mint decimals.
  */
 async function ensureMintDecimals() {
   if (mintDecimals != null) return mintDecimals;
   const conn = getConnection();
   const mint = getTokenMint();
-  const mintInfo = await getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+  const mintInfo = await rpcCallWithRetry(() => getMint(conn, mint, 'confirmed', TOKEN_2022_PROGRAM_ID));
   mintDecimals = mintInfo.decimals;
   return mintDecimals;
 }
@@ -88,8 +111,8 @@ function getUserDepositAddress(telegramId) {
 
 /**
  * Check SOL balance of a deposit wallet and top it up if below 0.002 SOL.
- * Sends 0.005 SOL from hot wallet to cover any future signing needs.
- * @param {PublicKey} pubkey - the keypair public key (ATA owner) to check and fund
+ * Sends 0.005 SOL from hot wallet. Called before every sweep attempt.
+ * @param {PublicKey} pubkey - the deposit keypair public key (ATA owner)
  */
 async function fundDepositWalletIfNeeded(pubkey) {
   const conn = getConnection();
@@ -97,7 +120,7 @@ async function fundDepositWalletIfNeeded(pubkey) {
   const MIN_LAMPORTS = Math.round(0.002 * LAMPORTS_PER_SOL);
   const FUND_LAMPORTS = Math.round(0.005 * LAMPORTS_PER_SOL);
 
-  const balance = await conn.getBalance(pubkey, 'confirmed');
+  const balance = await rpcCallWithRetry(() => conn.getBalance(pubkey, 'confirmed'));
   if (balance >= MIN_LAMPORTS) return;
 
   const toSend = FUND_LAMPORTS - balance;
@@ -108,11 +131,11 @@ async function fundDepositWalletIfNeeded(pubkey) {
     toPubkey: pubkey,
     lamports: toSend,
   }));
-  const { blockhash } = await conn.getLatestBlockhash();
+  const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
 
-  const sig = await sendAndConfirmTransaction(conn, tx, [wallet]);
+  const sig = await rpcCallWithRetry(() => sendAndConfirmTransaction(conn, tx, [wallet]));
   console.log(`[Fund] Sent ${toSend / LAMPORTS_PER_SOL} SOL to ${pubkey.toBase58().slice(0, 8)}... (tx: ${sig})`);
 }
 
@@ -139,7 +162,7 @@ async function ensureDepositATA(telegramId) {
 
   // Check if ATA already exists on-chain
   try {
-    await getAccount(conn, ataAddress, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    await rpcCallWithRetry(() => getAccount(conn, ataAddress, 'confirmed', TOKEN_2022_PROGRAM_ID));
     return ataAddress.toBase58(); // Already exists
   } catch (e) {
     // Doesn't exist — create it
@@ -148,19 +171,19 @@ async function ensureDepositATA(telegramId) {
   console.log(`[Deposit] Creating ATA for user ${telegramId}...`);
 
   const tx = new Transaction().add(createAssociatedTokenAccountInstruction(
-    wallet.publicKey,         // payer
-    ataAddress,               // ATA to create
-    depositKeypair.publicKey, // owner
-    mint,                     // mint
+    wallet.publicKey,
+    ataAddress,
+    depositKeypair.publicKey,
+    mint,
     TOKEN_2022_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID
   ));
 
-  const { blockhash } = await conn.getLatestBlockhash();
+  const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
 
-  const sig = await sendAndConfirmTransaction(conn, tx, [wallet]);
+  const sig = await rpcCallWithRetry(() => sendAndConfirmTransaction(conn, tx, [wallet]));
   console.log(`[Deposit] Created ATA for user ${telegramId}: ${ataAddress.toBase58()} (tx: ${sig})`);
 
   return ataAddress.toBase58();
@@ -171,15 +194,12 @@ async function ensureDepositATA(telegramId) {
  * Stores in both users.deposit_ata and deposit_wallets table.
  */
 async function getOrCreateUserDepositATA(telegramId) {
-  // Ensure deposit_ata column exists
   try {
     await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_ata TEXT');
   } catch (e) { /* already exists */ }
 
-  // Always derive from the CURRENT key
   const currentAddress = getUserDepositAddress(telegramId);
 
-  // Compare against what's stored in users table
   const res = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
   const storedAddress = res.rows[0]?.deposit_ata;
 
@@ -190,19 +210,17 @@ async function getOrCreateUserDepositATA(telegramId) {
     await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [currentAddress, String(telegramId)]);
   }
 
-  // Upsert into deposit_wallets so sweepAll() and the webhook can find it
+  // Upsert into deposit_wallets so sweepAll() and the webhook can find this address
   await query(`
     INSERT INTO deposit_wallets (user_id, deposit_address)
     VALUES ($1, $2)
     ON CONFLICT (deposit_address) DO UPDATE SET user_id = EXCLUDED.user_id
   `, [String(telegramId), currentAddress]);
 
-  // Open the ATA on-chain if it doesn't exist yet
   try {
     await ensureDepositATA(telegramId);
   } catch (err) {
     console.error(`[Deposit] Error creating ATA on-chain for ${telegramId}:`, err.message);
-    // Address still saved — user can retry /deposit later
   }
 
   return currentAddress;
@@ -227,7 +245,7 @@ async function pollDeposits(bot) {
         const ataPublicKey = new PublicKey(user.deposit_ata);
 
         try {
-          await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+          await rpcCallWithRetry(() => getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID));
         } catch {
           continue; // ATA not on-chain yet
         }
@@ -236,7 +254,7 @@ async function pollDeposits(bot) {
         const opts = { limit: 5 };
         if (lastSig) opts.until = lastSig;
 
-        const signatures = await conn.getSignaturesForAddress(ataPublicKey, opts);
+        const signatures = await rpcCallWithRetry(() => conn.getSignaturesForAddress(ataPublicKey, opts));
         if (signatures.length === 0) continue;
 
         const toProcess = signatures.reverse();
@@ -247,10 +265,10 @@ async function pollDeposits(bot) {
           const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [sigInfo.signature]);
           if (already.rows.length > 0) continue;
 
-          const tx = await conn.getTransaction(sigInfo.signature, {
+          const tx = await rpcCallWithRetry(() => conn.getTransaction(sigInfo.signature, {
             maxSupportedTransactionVersion: 0,
             commitment: 'confirmed',
-          });
+          }));
           if (!tx || !tx.meta) continue;
 
           const preBalances = tx.meta.preTokenBalances || [];
@@ -335,10 +353,8 @@ async function pollDeposits(bot) {
  * Sweep tokens from a single user's ATA to the hot wallet.
  *
  * Uses getTokenAccountBalance() instead of getAccount() as the primary balance
- * check — this works even for "closed"-status ATAs that still hold tokens, and
- * avoids failures caused by program-ID mismatches in getAccount().
- *
- * Funds the deposit keypair with SOL before every sweep attempt.
+ * check — works even for "closed"-status ATAs and avoids program-ID mismatch failures.
+ * All RPC calls are wrapped in rpcCallWithRetry to handle 429 rate limits.
  *
  * Returns { amount, signature } or null if nothing to sweep.
  */
@@ -356,7 +372,7 @@ async function sweepUserATA(telegramId) {
   // Use getTokenAccountBalance — works regardless of ATA state or token program
   let rawBalance = 0;
   try {
-    const balResp = await conn.getTokenAccountBalance(userAta, 'confirmed');
+    const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(userAta, 'confirmed'));
     rawBalance = Number(balResp?.value?.amount || 0);
   } catch {
     return null; // ATA doesn't exist or has no tokens
@@ -377,7 +393,7 @@ async function sweepUserATA(telegramId) {
 
   const tx = new Transaction();
   try {
-    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
       wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
@@ -388,11 +404,11 @@ async function sweepUserATA(telegramId) {
     userAta, mint, hotAta, depositKeypair.publicKey, BigInt(rawBalance), mintDecimals, [], TOKEN_2022_PROGRAM_ID
   ));
 
-  const { blockhash } = await conn.getLatestBlockhash();
+  const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
 
-  const sig = await sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]);
+  const sig = await rpcCallWithRetry(() => sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]));
   const uiAmount = rawBalance / Math.pow(10, mintDecimals);
   console.log(`[Sweep] Swept ${uiAmount} $YC from user ${telegramId} to hot wallet (tx: ${sig})`);
   return { amount: uiAmount, signature: sig };
@@ -401,16 +417,12 @@ async function sweepUserATA(telegramId) {
 /**
  * Sweep ALL deposit wallets to the hot wallet.
  *
- * Reads from BOTH deposit_wallets table AND users.deposit_ata so no wallet
- * is missed regardless of how it was registered.
- *
+ * Reads from BOTH deposit_wallets and users.deposit_ata.
  * For each address:
  *   1. Queries on-chain balance via getTokenAccountBalance() — never trusts DB
- *   2. Funds the deposit keypair with SOL if below 0.002 SOL
+ *   2. Funds deposit keypair with SOL if below 0.002 SOL
  *   3. Credits user's spot balance for any uncredited amount
  *   4. Sweeps all tokens to the hot wallet
- *
- * Returns array of { telegramId, amount, signature } for successful sweeps.
  */
 async function sweepAll(bot) {
   const conn = getConnection();
@@ -420,20 +432,15 @@ async function sweepAll(bot) {
 
   await ensureMintDecimals();
 
-  // Collect all unique deposit addresses from both tables
   const [walletRows, userRows] = await Promise.all([
     query('SELECT user_id, deposit_address FROM deposit_wallets'),
     query('SELECT telegram_id AS user_id, deposit_ata AS deposit_address FROM users WHERE deposit_ata IS NOT NULL'),
   ]);
 
-  // Merge into map: ataAddress -> telegramId (deposit_wallets takes precedence)
+  // Merge: deposit_wallets takes precedence on conflict
   const addressMap = new Map();
-  for (const row of userRows.rows) {
-    addressMap.set(row.deposit_address, row.user_id);
-  }
-  for (const row of walletRows.rows) {
-    addressMap.set(row.deposit_address, row.user_id);
-  }
+  for (const row of userRows.rows) addressMap.set(row.deposit_address, row.user_id);
+  for (const row of walletRows.rows) addressMap.set(row.deposit_address, row.user_id);
 
   console.log(`[Sweep] Checking ${addressMap.size} deposit wallet(s)...`);
 
@@ -441,13 +448,13 @@ async function sweepAll(bot) {
     try {
       const ataPublicKey = new PublicKey(ataAddress);
 
-      // Always check on-chain balance — never trust DB
+      // Check on-chain balance — never trust DB
       let rawBalance = 0;
       try {
-        const balResp = await conn.getTokenAccountBalance(ataPublicKey, 'confirmed');
+        const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
         rawBalance = Number(balResp?.value?.amount || 0);
       } catch {
-        continue; // ATA doesn't exist on-chain — skip silently
+        continue; // ATA doesn't exist on-chain
       }
 
       if (rawBalance === 0) {
@@ -508,13 +515,13 @@ async function sweepAll(bot) {
         }
       }
 
-      // Sweep all tokens to hot wallet
+      // Sweep tokens to hot wallet
       const hotAta = getAssociatedTokenAddressSync(
         mint, wallet.publicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       );
       const tx = new Transaction();
       try {
-        await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
       } catch {
         tx.add(createAssociatedTokenAccountInstruction(
           wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
@@ -524,11 +531,11 @@ async function sweepAll(bot) {
         ataPublicKey, mint, hotAta, depositKeypair.publicKey, BigInt(rawBalance), mintDecimals, [], TOKEN_2022_PROGRAM_ID
       ));
 
-      const { blockhash } = await conn.getLatestBlockhash();
+      const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
       tx.recentBlockhash = blockhash;
       tx.feePayer = wallet.publicKey;
 
-      const sig = await sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]);
+      const sig = await rpcCallWithRetry(() => sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]));
       console.log(`[Sweep] Swept ${uiAmount} $YC from user ${telegramId} to hot wallet (tx: ${sig})`);
       results.push({ telegramId, amount: uiAmount, signature: sig });
     } catch (err) {
@@ -543,7 +550,6 @@ async function sweepAll(bot) {
 /**
  * Startup recovery: scan all known deposit wallets for on-chain token balances,
  * fund SOL if needed, credit any uncredited amounts, then sweep to hot wallet.
- * Recovers tokens that arrived before the webhook/poller could detect them.
  */
 async function recoverDepositWallets(bot) {
   console.log('[Recovery] Starting startup deposit wallet recovery scan...');
@@ -575,7 +581,6 @@ function startDepositPoller(bot) {
 
   console.log('[Deposit] Starting deposit poller (webhook-first; backup poll every 5 minutes)...');
 
-  // Ensure deposits table exists
   query(`CREATE TABLE IF NOT EXISTS deposits (
     id SERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -585,7 +590,7 @@ function startDepositPoller(bot) {
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
 
-  // Run one-time recovery scan on startup to catch any tokens that arrived before now
+  // Run one-time recovery scan on startup to catch any stuck tokens
   recoverDepositWallets(bot).catch(err => console.error('[Recovery] Startup recovery error:', err.message));
 
   // Backup poll every 5 minutes (webhook is primary detection path)
@@ -614,11 +619,11 @@ async function rescanUser(telegramId, bot) {
 
     let onChainRaw = 0;
     try {
-      const account = await getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+      const account = await rpcCallWithRetry(() => getAccount(conn, ataPublicKey, 'confirmed', TOKEN_2022_PROGRAM_ID));
       onChainRaw = Number(account.amount);
     } catch {
       try {
-        const balResp = await conn.getTokenAccountBalance(ataPublicKey, 'confirmed');
+        const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
         if (balResp?.value?.amount) {
           onChainRaw = Number(balResp.value.amount);
           console.log(`[Rescan] User ${telegramId} ATA ${ataAddress.slice(0, 8)}...: getAccount failed, fallback balance = ${onChainRaw}`);
@@ -775,18 +780,18 @@ async function debugUserDeposit(telegramId) {
   const ataKey = new PublicKey(out.storedAta);
 
   try {
-    const account = await getAccount(conn, ataKey, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    const account = await rpcCallWithRetry(() => getAccount(conn, ataKey, 'confirmed', TOKEN_2022_PROGRAM_ID));
     out.ataOnChainMint = account.mint.toBase58();
-    const mintInfo = await getMint(conn, account.mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    const mintInfo = await rpcCallWithRetry(() => getMint(conn, account.mint, 'confirmed', TOKEN_2022_PROGRAM_ID));
     out.balance_token2022 = Number(account.amount) / Math.pow(10, mintInfo.decimals);
   } catch (err) {
     out.balance_token2022 = `error: ${err.message}`;
   }
 
   try {
-    const account = await getAccount(conn, ataKey, 'confirmed', TOKEN_PROGRAM_ID);
+    const account = await rpcCallWithRetry(() => getAccount(conn, ataKey, 'confirmed', TOKEN_PROGRAM_ID));
     if (!out.ataOnChainMint) out.ataOnChainMint = account.mint.toBase58();
-    const mintInfo = await getMint(conn, account.mint, 'confirmed', TOKEN_PROGRAM_ID);
+    const mintInfo = await rpcCallWithRetry(() => getMint(conn, account.mint, 'confirmed', TOKEN_PROGRAM_ID));
     out.balance_stdToken = Number(account.amount) / Math.pow(10, mintInfo.decimals);
   } catch (err) {
     out.balance_stdToken = `error: ${err.message}`;
@@ -808,7 +813,7 @@ async function forceSweepATA(ataAddress) {
 
   const ataPublicKey = new PublicKey(ataAddress);
 
-  const balResp = await conn.getTokenAccountBalance(ataPublicKey, 'confirmed');
+  const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
   const rawBalance = Number(balResp.value.amount);
   if (rawBalance === 0) return null;
 
@@ -837,7 +842,7 @@ async function forceSweepATA(ataAddress) {
 
   const tx = new Transaction();
   try {
-    await getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID);
+    await rpcCallWithRetry(() => getAccount(conn, hotAta, 'confirmed', TOKEN_2022_PROGRAM_ID));
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
       wallet.publicKey, hotAta, wallet.publicKey, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
@@ -848,11 +853,11 @@ async function forceSweepATA(ataAddress) {
     ataPublicKey, mint, hotAta, depositKeypair.publicKey, BigInt(rawBalance), mintDecimals, [], TOKEN_2022_PROGRAM_ID
   ));
 
-  const { blockhash } = await conn.getLatestBlockhash();
+  const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
 
-  const sig = await sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]);
+  const sig = await rpcCallWithRetry(() => sendAndConfirmTransaction(conn, tx, [wallet, depositKeypair]));
   const uiAmount = rawBalance / Math.pow(10, mintDecimals);
   console.log(`[ForceSweep] Swept ${uiAmount} $YC from ${ataAddress.slice(0, 8)}... to hot wallet (tx: ${sig})`);
   return { amount: uiAmount, signature: sig, telegramId };
