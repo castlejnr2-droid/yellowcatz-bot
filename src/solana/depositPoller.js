@@ -12,6 +12,7 @@ const {
 const bs58 = require('bs58');
 const crypto = require('crypto');
 const { query, pool } = require('../db');
+const { registerAddressWithHelius, syncHeliusWatchlist } = require('./helius');
 require('dotenv').config();
 
 let connection;
@@ -231,6 +232,12 @@ async function getOrCreateUserDepositATA(telegramId) {
     VALUES ($1, $2)
     ON CONFLICT (deposit_address) DO UPDATE SET user_id = EXCLUDED.user_id
   `, [String(telegramId), currentAddress]);
+
+  // Register with Helius so webhook events fire for this deposit address.
+  // Fire-and-forget — failure is non-fatal (backup poller still catches deposits).
+  registerAddressWithHelius(currentAddress).catch(err =>
+    console.error(`[Deposit] Helius registration failed for user ${telegramId}:`, err.message)
+  );
 
   try {
     await ensureDepositATA(telegramId);
@@ -604,6 +611,9 @@ function startDepositPoller(bot) {
     from_address TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(err => console.error('[Deposit] Failed to create deposits table:', err?.message));
+
+  // Sync all known deposit addresses with Helius watchlist on startup
+  syncHeliusWatchlist().catch(err => console.error('[Helius] Startup sync error:', err.message));
 
   // Run one-time recovery scan on startup to catch any stuck tokens
   recoverDepositWallets(bot).catch(err => console.error('[Recovery] Startup recovery error:', err.message));
