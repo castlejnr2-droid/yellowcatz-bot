@@ -416,6 +416,201 @@ async function getWithdrawalBreakdown() {
   return res.rows;
 }
 
+// ─── DUEL CHALLENGES ─────────────────────────────────────────────────────────
+
+async function getUserByUsername(username) {
+  const clean = username.replace(/^@/, '');
+  const res = await query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [clean]);
+  return res.rows[0] || null;
+}
+
+async function getPendingDuelBetween(challengerId, targetId) {
+  const res = await query(
+    "SELECT id FROM duel_challenges WHERE challenger_id = $1 AND target_id = $2 AND status = 'pending'",
+    [String(challengerId), String(targetId)]
+  );
+  return res.rows[0] || null;
+}
+
+async function createDuelChallenge(challengerId, targetId, amount) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance - $1, updated_at = NOW() WHERE telegram_id = $2',
+      [amount, String(challengerId)]
+    );
+    const res = await client.query(
+      'INSERT INTO duel_challenges (challenger_id, target_id, amount) VALUES ($1, $2, $3) RETURNING *',
+      [String(challengerId), String(targetId), amount]
+    );
+    await client.query('COMMIT');
+    return res.rows[0];
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function getDuelChallenge(id) {
+  const res = await query('SELECT * FROM duel_challenges WHERE id = $1', [id]);
+  return res.rows[0] || null;
+}
+
+async function setDuelMessageIds(id, challengerMsgId, targetMsgId) {
+  await query(
+    'UPDATE duel_challenges SET challenger_message_id = $1, target_message_id = $2 WHERE id = $3',
+    [challengerMsgId, targetMsgId, id]
+  );
+}
+
+async function acceptDuel(duelId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const duelRes = await client.query(
+      "SELECT * FROM duel_challenges WHERE id = $1 AND status = 'pending' FOR UPDATE",
+      [duelId]
+    );
+    const duel = duelRes.rows[0];
+    if (!duel) { await client.query('ROLLBACK'); return null; }
+
+    const targetRes = await client.query(
+      'SELECT gamble_balance FROM users WHERE telegram_id = $1 FOR UPDATE',
+      [duel.target_id]
+    );
+    const targetBalance = parseFloat(targetRes.rows[0]?.gamble_balance || 0);
+    if (targetBalance < duel.amount) {
+      await client.query('ROLLBACK');
+      return { insufficientBalance: true, required: duel.amount, available: targetBalance };
+    }
+
+    const pot = duel.amount * 2;
+    const fee = Math.floor(pot * 0.05);
+    const payout = pot - fee;
+
+    let challengerRoll = Math.floor(Math.random() * 100) + 1;
+    let opponentRoll = Math.floor(Math.random() * 100) + 1;
+    while (challengerRoll === opponentRoll) {
+      challengerRoll = Math.floor(Math.random() * 100) + 1;
+      opponentRoll = Math.floor(Math.random() * 100) + 1;
+    }
+    const winnerId = challengerRoll > opponentRoll ? duel.challenger_id : duel.target_id;
+
+    // Lock target tokens
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance - $1, updated_at = NOW() WHERE telegram_id = $2',
+      [duel.amount, duel.target_id]
+    );
+    // Pay winner
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [payout, winnerId]
+    );
+    // House fee
+    await client.query(
+      'UPDATE house_balance SET balance = balance + $1, total_fees_collected = total_fees_collected + $1, updated_at = NOW()',
+      [fee]
+    );
+    // Mark completed
+    await client.query("UPDATE duel_challenges SET status = 'completed' WHERE id = $1", [duelId]);
+
+    await client.query('COMMIT');
+    console.log(`[Duel] #${duelId} resolved. Pot=${pot} Fee=${fee} Payout=${payout} Winner=${winnerId}`);
+    return { duel, winnerId, challengerRoll, opponentRoll, pot, fee, payout };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function cancelDuel(duelId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const duelRes = await client.query(
+      "SELECT * FROM duel_challenges WHERE id = $1 AND status = 'pending' FOR UPDATE",
+      [duelId]
+    );
+    const duel = duelRes.rows[0];
+    if (!duel) { await client.query('ROLLBACK'); return null; }
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [duel.amount, duel.challenger_id]
+    );
+    await client.query("UPDATE duel_challenges SET status = 'cancelled' WHERE id = $1", [duelId]);
+    await client.query('COMMIT');
+    return duel;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function declineDuel(duelId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const duelRes = await client.query(
+      "SELECT * FROM duel_challenges WHERE id = $1 AND status = 'pending' FOR UPDATE",
+      [duelId]
+    );
+    const duel = duelRes.rows[0];
+    if (!duel) { await client.query('ROLLBACK'); return null; }
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [duel.amount, duel.challenger_id]
+    );
+    await client.query("UPDATE duel_challenges SET status = 'declined' WHERE id = $1", [duelId]);
+    await client.query('COMMIT');
+    return duel;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function getExpiredDuels() {
+  const res = await query(
+    "SELECT * FROM duel_challenges WHERE status = 'pending' AND expires_at < NOW()"
+  );
+  return res.rows;
+}
+
+async function expireDuel(duelId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const duelRes = await client.query(
+      "SELECT * FROM duel_challenges WHERE id = $1 AND status = 'pending' FOR UPDATE",
+      [duelId]
+    );
+    const duel = duelRes.rows[0];
+    if (!duel) { await client.query('ROLLBACK'); return null; }
+    await client.query(
+      'UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [duel.amount, duel.challenger_id]
+    );
+    await client.query("UPDATE duel_challenges SET status = 'expired' WHERE id = $1", [duelId]);
+    await client.query('COMMIT');
+    return duel;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // ─── HOUSE BALANCE ───────────────────────────────────────────────────────────
 
 async function getHouseBalance() {
@@ -475,5 +670,7 @@ module.exports = {
   createBattle, getOpenBattles, getBattleById, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
   creditReferral, getReferralStats, getUserByReferralCode,
   getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats,
-  getHouseBalance, withdrawFromHouse
+  getHouseBalance, withdrawFromHouse,
+  getUserByUsername, getPendingDuelBetween, createDuelChallenge, getDuelChallenge,
+  setDuelMessageIds, acceptDuel, cancelDuel, declineDuel, getExpiredDuels, expireDuel
 };

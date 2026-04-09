@@ -2,6 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { handleStart } = require('./commands/start');
 const { handleCollect } = require('./commands/collect');
 const { handleBattleCommand } = require('./commands/battle');
+const { startDuelExpiryJob } = require('./commands/duel');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
@@ -662,6 +663,9 @@ function createBot() {
 
   // Start deposit poller
   startDepositPoller(bot);
+
+  // Start duel expiry job (checks every 60s)
+  startDuelExpiryJob(bot);
 
   console.log('✅ YellowCatz Bot is running!');
   return bot;

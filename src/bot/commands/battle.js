@@ -1,5 +1,6 @@
 const db = require('../../db/queries');
 const { formatBalance } = require('./start');
+const { handleDirectChallenge } = require('./duel');
 
 const MIN_WAGER = 10;
 
@@ -14,16 +15,29 @@ async function handleBattleCommand(bot, msg, args) {
   const { id: telegramId, username, first_name: firstName } = msg.from;
   const chatId = msg.chat.id;
 
-  const user = await db.getOrCreateUser({ telegramId, username, firstName });
-
   if (!args || !args[0]) {
     return await showBattleMenu(bot, chatId, telegramId);
   }
 
+  // Detect direct challenge: any arg starts with '@'
+  const usernameArg = args.find(a => a.startsWith('@'));
+  const amountArg = args.find(a => !a.startsWith('@'));
+
+  if (usernameArg) {
+    // /pvp @username <amount> — locked direct challenge
+    const amount = parseFloat(amountArg);
+    return await handleDirectChallenge(bot, msg, usernameArg, amount);
+  }
+
+  // /pvp <amount> — existing open matchmaking (unchanged)
+  const user = await db.getOrCreateUser({ telegramId, username, firstName });
   const amount = parseFloat(args[0]);
   if (isNaN(amount) || amount < MIN_WAGER) {
     return await bot.sendMessage(chatId,
-      `⚔️ *Battle Command*\n\nUsage: \`/battle <amount>\`\nMinimum wager: \`${MIN_WAGER} $YC\`\n\nExample: \`/battle 100\``,
+      `⚔️ *Battle Command*\n\nUsage:\n` +
+      `  \`/pvp <amount>\` — open matchmaking\n` +
+      `  \`/pvp @username <amount>\` — direct duel\n\n` +
+      `Minimum wager: \`${MIN_WAGER} $YC\``,
       { parse_mode: 'Markdown' }
     );
   }

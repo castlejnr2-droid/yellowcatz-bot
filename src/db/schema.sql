@@ -148,3 +148,20 @@ CREATE TABLE IF NOT EXISTS deposit_wallets (
 
 CREATE INDEX IF NOT EXISTS idx_deposit_wallets_user_id ON deposit_wallets(user_id);
 CREATE INDEX IF NOT EXISTS idx_deposit_wallets_address ON deposit_wallets(deposit_address);
+
+-- Direct (locked) PvP duel challenges
+CREATE TABLE IF NOT EXISTS duel_challenges (
+  id SERIAL PRIMARY KEY,
+  challenger_id TEXT NOT NULL REFERENCES users(telegram_id),
+  target_id TEXT NOT NULL REFERENCES users(telegram_id),
+  amount DOUBLE PRECISION NOT NULL,
+  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','completed','cancelled','declined','expired')),
+  challenger_message_id BIGINT,
+  target_message_id BIGINT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '5 minutes'
+);
+
+CREATE INDEX IF NOT EXISTS idx_duel_challenger ON duel_challenges(challenger_id);
+CREATE INDEX IF NOT EXISTS idx_duel_target ON duel_challenges(target_id);
+CREATE INDEX IF NOT EXISTS idx_duel_status ON duel_challenges(status);

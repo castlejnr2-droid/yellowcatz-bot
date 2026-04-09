@@ -2,6 +2,7 @@ const { getMainMenuKeyboard, getPortfolioText } = require('../commands/start');
 const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWithdrawalHistory, confirmWithdrawal, handleDeposit, clearState } = require('./funds');
 const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
+const { handleDuelAccept, handleDuelDecline, handleDuelCancel } = require('../commands/duel');
 const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
 const { sendTokens } = require('../../solana/withdraw');
@@ -16,7 +17,11 @@ async function _handleCallback(bot, query) {
   const telegramId = from.id;
   const { username, first_name: firstName } = from;
 
-  try { await bot.answerCallbackQuery(queryId); } catch {}
+  // Duel callbacks manage answerCallbackQuery themselves (need show_alert for errors)
+  const isDuelCb = data.startsWith('accept_duel_') || data.startsWith('decline_duel_') || data.startsWith('cancel_duel_');
+  if (!isDuelCb) {
+    try { await bot.answerCallbackQuery(queryId); } catch {}
+  }
   const msgId = message.message_id;
 
   async function edit(text, opts = {}) {
@@ -114,6 +119,20 @@ async function _handleCallback(bot, query) {
       } catch {}
     }
     return;
+  }
+
+  // ── Direct Duel ──
+  if (data.startsWith('accept_duel_')) {
+    const duelId = parseInt(data.replace('accept_duel_', ''));
+    return await handleDuelAccept(bot, from, query, duelId);
+  }
+  if (data.startsWith('decline_duel_')) {
+    const duelId = parseInt(data.replace('decline_duel_', ''));
+    return await handleDuelDecline(bot, from, query, duelId);
+  }
+  if (data.startsWith('cancel_duel_')) {
+    const duelId = parseInt(data.replace('cancel_duel_', ''));
+    return await handleDuelCancel(bot, from, query, duelId);
   }
 
   // ── Leaderboard ──
