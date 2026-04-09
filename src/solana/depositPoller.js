@@ -125,6 +125,11 @@ async function ensureDepositATA(telegramId) {
 /**
  * Get or create a user's deposit address, storing in DB.
  * This is the main entry point for /deposit command.
+ *
+ * Always re-derives the ATA from the current SOLANA_PRIVATE_KEY so that key
+ * rotations are handled automatically: if the stored address no longer matches
+ * the current derivation (old key was in use when it was created), the DB is
+ * updated and a new ATA is opened on-chain.
  */
 async function getOrCreateUserDepositATA(telegramId) {
   // Ensure deposit_ata column exists
@@ -132,26 +137,35 @@ async function getOrCreateUserDepositATA(telegramId) {
     await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_ata TEXT');
   } catch (e) { /* already exists */ }
 
-  // Check DB first
+  // Always derive from the CURRENT key
+  const currentAddress = getUserDepositAddress(telegramId);
+
+  // Compare against what's stored
   const res = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
-  if (res.rows[0]?.deposit_ata) {
-    return res.rows[0].deposit_ata;
+  const storedAddress = res.rows[0]?.deposit_ata;
+
+  if (storedAddress === currentAddress) {
+    // Already up to date — nothing to do
+    return currentAddress;
   }
 
-  // Derive address (offline) and store in DB
-  const ataAddress = getUserDepositAddress(telegramId);
-  await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [ataAddress, String(telegramId)]);
+  if (storedAddress) {
+    // Key rotation detected: stored address was derived from old key
+    console.log(`[Deposit] Key rotation detected for user ${telegramId} — updating deposit ATA: ${storedAddress.slice(0, 8)}... → ${currentAddress.slice(0, 8)}...`);
+  }
 
-  // Create on-chain (this is the only RPC call)
+  // Persist the current derived address
+  await query('UPDATE users SET deposit_ata = $1 WHERE telegram_id = $2', [currentAddress, String(telegramId)]);
+
+  // Open the new ATA on-chain if it doesn't exist yet
   try {
     await ensureDepositATA(telegramId);
   } catch (err) {
     console.error(`[Deposit] Error creating ATA on-chain for ${telegramId}:`, err.message);
-    // Address is still saved — poller will skip if ATA doesn't exist yet
-    // User can retry /deposit later
+    // Address is still saved — user can retry /deposit later
   }
 
-  return ataAddress;
+  return currentAddress;
 }
 
 // Track last processed signature per user ATA
@@ -499,12 +513,10 @@ async function sweepUserATA(telegramId) {
     mintDecimals = mintInfo.decimals;
   }
 
-  // Use the stored ATA address from DB — this is where tokens actually reside.
-  // Re-deriving here would give the wrong address if stored ATA differs.
-  const userRes = await query('SELECT deposit_ata FROM users WHERE telegram_id = $1', [String(telegramId)]);
-  const storedAtaStr = userRes.rows[0]?.deposit_ata;
-  if (!storedAtaStr) return null;
-  const userAta = new PublicKey(storedAtaStr);
+  // Always derive the ATA from the current key so the authority keypair and ATA
+  // owner are guaranteed to match — even after a key rotation.
+  const userAtaStr = getUserDepositAddress(telegramId);
+  const userAta = new PublicKey(userAtaStr);
 
   // Check balance using Token-2022 program
   let account;

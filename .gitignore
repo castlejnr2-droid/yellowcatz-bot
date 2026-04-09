@@ -7,3 +7,5 @@ node_modules/
 dist/
 logs/
 *.log
+authority-keypair.json
+*-keypair.json
