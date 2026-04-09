@@ -52,9 +52,25 @@ async function getTotalUserCount() {
 // ─── COLLECTIONS ─────────────────────────────────────────────────────────────
 
 async function recordCollection(telegramId, amount) {
-  await query('INSERT INTO collections (user_id, amount) VALUES ($1, $2)', [String(telegramId), amount]);
-  await updateUserBalances(telegramId, amount, 0);
-  await setLastCollect(telegramId);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('INSERT INTO collections (user_id, amount) VALUES ($1, $2)', [String(telegramId), amount]);
+    await client.query(`
+      UPDATE users
+      SET gamble_balance   = gamble_balance + $1,
+          total_collected  = total_collected + $1,
+          last_collect_at  = NOW(),
+          updated_at       = NOW()
+      WHERE telegram_id = $2
+    `, [amount, String(telegramId)]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function getUserCollections(telegramId, limit = 20) {

@@ -105,6 +105,20 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 
+-- Collector tier: lifetime total tokens ever collected (never decremented)
+DO $$ BEGIN
+  ALTER TABLE users ADD COLUMN total_collected DOUBLE PRECISION DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Backfill total_collected from existing collections for any user where it is still 0
+UPDATE users u
+SET total_collected = COALESCE((
+  SELECT SUM(c.amount) FROM collections c WHERE c.user_id = u.telegram_id
+), 0)
+WHERE total_collected = 0
+  AND EXISTS (SELECT 1 FROM collections c WHERE c.user_id = u.telegram_id);
+
 -- Deposit wallets: tracks per-user deposit addresses and fee funding state
 CREATE TABLE IF NOT EXISTS deposit_wallets (
   id SERIAL PRIMARY KEY,

@@ -1,7 +1,6 @@
 const db = require('../../db/queries');
+const { getTier } = require('./collect');
 require('dotenv').config();
-
-const COLLECT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 function formatBalance(n) {
   return Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -25,11 +24,29 @@ function getMainMenuKeyboard(chatId) {
   };
 }
 
+function getCollectStatus(user) {
+  const tier = getTier(user.total_collected);
+  if (!user.last_collect_at) return { ready: true, tier };
+  const elapsed = Date.now() - new Date(user.last_collect_at).getTime();
+  if (elapsed >= tier.cooldownMs) return { ready: true, tier };
+  const remainMs = tier.cooldownMs - elapsed;
+  const totalSec = Math.ceil(remainMs / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  const remainStr = (mins > 0 && secs > 0) ? `${mins}m ${secs}s`
+    : (mins > 0) ? `${mins}m` : `${secs}s`;
+  return { ready: false, tier, remainStr };
+}
+
 function getPortfolioText(user) {
   const gamble = formatBalance(user.gamble_balance);
   const spot = formatBalance(user.spot_balance);
   const total = formatBalance((user.gamble_balance || 0) + (user.spot_balance || 0));
   const name = user.first_name || user.username || 'Catz Fan';
+  const { ready, tier, remainStr } = getCollectStatus(user);
+  const collectLine = ready
+    ? `✅ *Collect ready!* — Use /collect now`
+    : `⏳ Next collect in: *${remainStr}*`;
 
   return (
     `🐱 *Welcome, ${name}!*\n\n` +
@@ -40,7 +57,8 @@ function getPortfolioText(user) {
     `💲 Spot Balance:    \`${spot}\` $YC\n` +
     `📊 Total:           \`${total}\` $YC\n\n` +
     `━━━━━━━━━━━━━━━━━\n` +
-    `💡 _Tip: Use /collect to earn free tokens!_\n` +
+    `🏆 Tier: *${tier.emoji} ${tier.name}* — cooldown ${tier.label}\n` +
+    `${collectLine}\n` +
     `💡 _Use /battle <amount> to challenge someone!_`
   );
 }

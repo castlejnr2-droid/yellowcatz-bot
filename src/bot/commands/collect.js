@@ -1,9 +1,23 @@
 const db = require('../../db/queries');
 
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 const MIN_COLLECT = 10;
 const MAX_COLLECT = 200;
 const REFERRAL_BONUS = 50;
+
+// Tiers ordered highest-first so the first match wins
+const TIERS = [
+  { name: 'Elite',   emoji: '👑', minCollected: 10000, cooldownMs: 60 * 60 * 1000, label: '1 hour' },
+  { name: 'Veteran', emoji: '⭐', minCollected: 1000,  cooldownMs: 30 * 60 * 1000, label: '30 mins' },
+  { name: 'Starter', emoji: '🌱', minCollected: 0,     cooldownMs:  5 * 60 * 1000, label: '5 mins' },
+];
+
+function getTier(totalCollected) {
+  const n = Number(totalCollected || 0);
+  for (const tier of TIERS) {
+    if (n >= tier.minCollected) return tier;
+  }
+  return TIERS[TIERS.length - 1];
+}
 
 function randomCollectAmount() {
   return Math.floor(Math.random() * (MAX_COLLECT - MIN_COLLECT + 1)) + MIN_COLLECT;
@@ -23,17 +37,17 @@ async function handleCollect(bot, msg) {
   const chatId = msg.chat.id;
 
   const user = await db.getOrCreateUser({ telegramId, username, firstName });
+  const tier = getTier(user.total_collected);
 
   // Check cooldown
   if (user.last_collect_at) {
-    const lastCollect = new Date(user.last_collect_at).getTime();
-    const now = Date.now();
-    const elapsed = now - lastCollect;
-    if (elapsed < COOLDOWN_MS) {
-      const remaining = COOLDOWN_MS - elapsed;
+    const elapsed = Date.now() - new Date(user.last_collect_at).getTime();
+    if (elapsed < tier.cooldownMs) {
+      const remaining = tier.cooldownMs - elapsed;
       await bot.sendMessage(chatId,
         `🐱 Patience, little catz!\n\n` +
-        `⏰ You can collect again in *${msToMinSec(remaining)}*.\n\n` +
+        `⏳ You can collect again in *${msToMinSec(remaining)}*.\n\n` +
+        `🏆 Tier: *${tier.emoji} ${tier.name}* — cooldown ${tier.label}\n\n` +
         `_Come back soon for more $YC!_ 🐾`,
         { parse_mode: 'Markdown' }
       );
@@ -73,7 +87,7 @@ async function handleCollect(bot, msg) {
   }
 
   const refreshedUser = await db.getUser(telegramId);
-  console.log(`[COLLECT] After update, user ${telegramId} balance:`, JSON.stringify({gamble: refreshedUser?.gamble_balance, spot: refreshedUser?.spot_balance}));
+  const newTier = getTier(refreshedUser.total_collected);
   const newBalance = Number(refreshedUser.gamble_balance || 0);
 
   const catEmojis = ['🐱', '😺', '😸', '🐾', '🌟', '💛', '✨'];
@@ -81,9 +95,10 @@ async function handleCollect(bot, msg) {
 
   await bot.sendMessage(chatId,
     `${randomCat} *Collect Success!*\n\n` +
-    `💰 You collected *${amount.toLocaleString()} $YC* tokens!\n\n` +
-    `🎰 Gamble Balance: \`${newBalance.toLocaleString()} $YC\`\n\n` +
-    `_Come back in 5 minutes for more!_ ⏰`,
+    `✅ Collected *${amount.toLocaleString()} $YC*!\n` +
+    `💰 Gamble Balance: \`${newBalance.toLocaleString()} $YC\`\n` +
+    `⏱ Next collect in: *${newTier.label}*\n` +
+    `🏆 Collector tier: *${newTier.emoji} ${newTier.name}*`,
     {
       parse_mode: 'Markdown',
       reply_markup: {
@@ -96,4 +111,4 @@ async function handleCollect(bot, msg) {
   );
 }
 
-module.exports = { handleCollect };
+module.exports = { handleCollect, getTier, TIERS };
