@@ -7,7 +7,6 @@ const { sweepUserATA } = require('../../solana/depositPoller');
 let _bot = null;
 function setBot(bot) { _bot = bot; }
 
-// Helius sends the value of your authHeader field in the Authorization header
 function verifyHelius(req, res, next) {
   const secret = process.env.HELIUS_WEBHOOK_SECRET;
   const received = req.headers['authorization'];
@@ -24,16 +23,98 @@ function verifyHelius(req, res, next) {
 }
 
 /**
+ * Look up which user owns a deposit address.
+ * Checks deposit_wallets first (most up-to-date), then users.deposit_ata as fallback.
+ */
+async function findTelegramIdByAddress(address) {
+  const dwRes = await query(
+    'SELECT user_id FROM deposit_wallets WHERE deposit_address = $1',
+    [address]
+  );
+  if (dwRes.rows[0]) return dwRes.rows[0].user_id;
+
+  const userRes = await query(
+    'SELECT telegram_id FROM users WHERE deposit_ata = $1',
+    [address]
+  );
+  return userRes.rows[0]?.telegram_id || null;
+}
+
+/**
+ * Credit a user and trigger a sweep + notification. Returns true if credited.
+ */
+async function creditAndSweep(telegramId, amount, signature, fromAddress) {
+  // Dedup — tx_signature has a UNIQUE constraint
+  const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [signature]);
+  if (already.rows.length > 0) {
+    console.log(`[Webhook] Already processed tx ${signature.slice(0, 12)}... for user ${telegramId}, skipping`);
+    return false;
+  }
+
+  const client = await pool.connect();
+  let credited = false;
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
+      [telegramId, amount, signature, fromAddress]
+    );
+    await client.query(
+      'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [amount, telegramId]
+    );
+    await client.query('COMMIT');
+    credited = true;
+    console.log(`[Webhook] Matched deposit: userId=${telegramId} amount=${amount} address=${fromAddress}`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(`[Webhook] Failed to credit user ${telegramId}:`, err.message);
+  } finally {
+    client.release();
+  }
+
+  if (!credited) return false;
+
+  // Auto-sweep to hot wallet
+  try {
+    const swept = await sweepUserATA(telegramId);
+    if (swept) {
+      console.log(`[Webhook] Auto-swept ${swept.amount} $YC from user ${telegramId} (tx: ${swept.signature.slice(0, 12)}...)`);
+    }
+  } catch (sweepErr) {
+    console.error(`[Webhook] Auto-sweep failed for user ${telegramId}:`, sweepErr.message);
+  }
+
+  // Notify user
+  if (_bot) {
+    try {
+      const shortTx = signature.slice(0, 12) + '...' + signature.slice(-8);
+      await _bot.sendMessage(telegramId,
+        `✅ *Deposit Received!*\n\n` +
+        `Amount: \`${Number(amount).toLocaleString()}\` $YC\n` +
+        `TX: \`${shortTx}\`\n\n` +
+        `Tokens credited to your 💲 Spot Balance!`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (e) {
+      console.error(`[Webhook] Failed to notify user ${telegramId}:`, e.message);
+    }
+  }
+
+  return true;
+}
+
+/**
  * POST /api/webhook/helius
  *
- * Helius Enhanced Transaction webhook. Token-2022 transfers do NOT populate
- * tokenTransfers in the Helius payload, so we parse deposits from the raw
- * meta.preTokenBalances / meta.postTokenBalances instead.
+ * Helius Enhanced Transaction webhook.
  *
- * For each account whose YC balance increased:
- *   1. Resolve its address from transaction.message.accountKeys[accountIndex]
- *   2. Look up the matching user in the DB by deposit_ata
- *   3. Credit the user and trigger a sweep to the hot wallet
+ * PRIMARY path: reads event.tokenTransfers[] — the standard Helius format for
+ * SPL token transfers. For each transfer whose mint matches YC_TOKEN_MINT and
+ * whose toUserAccount is a known deposit address, credit the user and sweep.
+ *
+ * FALLBACK path: reads meta.preTokenBalances / meta.postTokenBalances for
+ * events where tokenTransfers is absent or empty.
  */
 router.post('/helius', (req, res, next) => {
   const auth = req.headers['authorization'];
@@ -57,107 +138,69 @@ router.post('/helius', (req, res, next) => {
     try {
       const signature = event.signature;
 
-      // Resolve account key list — handles both legacy and versioned transactions
+      // ── PRIMARY: tokenTransfers[] ──────────────────────────────────────────
+      const tokenTransfers = Array.isArray(event.tokenTransfers) ? event.tokenTransfers : [];
+
+      console.log(
+        `[Webhook] tx=${String(signature).slice(0, 16)}...` +
+        ` | tokenTransfers=${tokenTransfers.length}` +
+        ` | preBalances=${(event.meta?.preTokenBalances ?? []).length}` +
+        ` | postBalances=${(event.meta?.postTokenBalances ?? []).length}`
+      );
+
+      for (const transfer of tokenTransfers) {
+        if (transfer.mint !== mintAddress) continue;
+
+        const toAddress = transfer.toUserAccount;
+        const amount = Number(transfer.tokenAmount || 0);
+
+        if (!toAddress || amount <= 0) continue;
+
+        const telegramId = await findTelegramIdByAddress(toAddress);
+        if (!telegramId) {
+          console.log(`[Webhook] SKIP tokenTransfer — no user for address ${toAddress}`);
+          continue;
+        }
+
+        await creditAndSweep(telegramId, amount, signature, toAddress);
+      }
+
+      // ── FALLBACK: preTokenBalances / postTokenBalances ─────────────────────
+      // Used when Helius sends raw transaction data instead of enhanced format.
+      const pre  = event.meta?.preTokenBalances  ?? [];
+      const post = event.meta?.postTokenBalances ?? [];
+
+      if (post.length === 0) continue; // No balance data and no tokenTransfers
+
       const message = event.transaction?.message;
       const rawKeys = message?.staticAccountKeys ?? message?.accountKeys ?? [];
       const accountKeys = rawKeys.map(k => (typeof k === 'string' ? k : k?.pubkey ?? String(k)));
 
-      const pre  = event.meta?.preTokenBalances  ?? [];
-      const post = event.meta?.postTokenBalances ?? [];
-
-      console.log(`[Webhook] tx=${String(signature).slice(0, 16)}... | accounts=${accountKeys.length} | preBalances=${pre.length} | postBalances=${post.length}`);
-
       for (const postBal of post) {
-        // Only our mint
         if (postBal.mint !== mintAddress) continue;
 
         const accountIndex = postBal.accountIndex;
-        const ataAddress   = accountKeys[accountIndex];
+        const ataAddress = accountKeys[accountIndex];
         if (!ataAddress) {
-          console.log(`[Webhook] SKIP — no accountKey at index ${accountIndex}`);
+          console.log(`[Webhook] SKIP fallback — no accountKey at index ${accountIndex}`);
           continue;
         }
 
-        // Calculate how much was received (UI amount)
-        const preBal    = pre.find(p => p.accountIndex === accountIndex);
-        const preAmount  = Number(preBal?.uiTokenAmount?.uiAmount  ?? 0);
-        const postAmount = Number(postBal.uiTokenAmount?.uiAmount  ?? 0);
-        const delta      = postAmount - preAmount;
-
-        console.log(`[Webhook] Account[${accountIndex}] ${ataAddress.slice(0, 8)}... | pre=${preAmount} post=${postAmount} delta=${delta}`);
+        const preBal = pre.find(p => p.accountIndex === accountIndex);
+        const preAmount  = Number(preBal?.uiTokenAmount?.uiAmount ?? 0);
+        const postAmount = Number(postBal.uiTokenAmount?.uiAmount ?? 0);
+        const delta = postAmount - preAmount;
 
         if (delta <= 0) continue;
 
-        // Find which user owns this ATA
-        const userRes = await query(
-          'SELECT telegram_id FROM users WHERE deposit_ata = $1',
-          [ataAddress]
-        );
-        if (!userRes.rows[0]) {
-          console.log(`[Webhook] SKIP — no user in DB with deposit_ata=${ataAddress}`);
+        const telegramId = await findTelegramIdByAddress(ataAddress);
+        if (!telegramId) {
+          console.log(`[Webhook] SKIP fallback — no user for ${ataAddress}`);
           continue;
         }
 
-        const telegramId = userRes.rows[0].telegram_id;
-        const amount     = delta;
-
-        // Dedup — signature is unique per on-chain tx
-        const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [signature]);
-        if (already.rows.length > 0) {
-          console.log(`[Webhook] Already processed tx ${signature.slice(0, 12)}... for user ${telegramId}, skipping`);
-          continue;
-        }
-
-        // Credit user
-        const client = await pool.connect();
-        let credited = false;
-        try {
-          await client.query('BEGIN');
-          await client.query(
-            'INSERT INTO deposits (user_id, amount, tx_signature, from_address) VALUES ($1, $2, $3, $4)',
-            [telegramId, amount, signature, ataAddress]
-          );
-          await client.query(
-            'UPDATE users SET spot_balance = spot_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
-            [amount, telegramId]
-          );
-          await client.query('COMMIT');
-          credited = true;
-          console.log(`[Webhook] Credited ${amount} $YC to user ${telegramId} (tx: ${signature.slice(0, 12)}...)`);
-        } catch (err) {
-          await client.query('ROLLBACK');
-          console.error(`[Webhook] Failed to credit user ${telegramId}:`, err.message);
-        } finally {
-          client.release();
-        }
-
-        if (!credited) continue;
-
-        // Auto-sweep to hot wallet
-        try {
-          const swept = await sweepUserATA(telegramId);
-          if (swept) {
-            console.log(`[Webhook] Auto-swept ${swept.amount} $YC from user ${telegramId} (tx: ${swept.signature.slice(0, 12)}...)`);
-          }
-        } catch (sweepErr) {
-          console.error(`[Webhook] Auto-sweep failed for user ${telegramId}:`, sweepErr.message);
-        }
-
-        // Notify user via Telegram
-        if (_bot) {
-          try {
-            const shortTx = signature.slice(0, 12) + '...' + signature.slice(-8);
-            await _bot.sendMessage(telegramId,
-              `✅ *Deposit Received!*\n\n` +
-              `Amount: \`${amount.toLocaleString()}\` $YC\n` +
-              `TX: \`${shortTx}\`\n\n` +
-              `Tokens credited to your 💲 Spot Balance!`,
-              { parse_mode: 'Markdown' }
-            );
-          } catch (e) {
-            console.error(`[Webhook] Failed to notify user ${telegramId}:`, e.message);
-          }
-        }
+        console.log(`[Webhook] Fallback match: Account[${accountIndex}] ${ataAddress.slice(0, 8)}... delta=${delta}`);
+        await creditAndSweep(telegramId, delta, signature, ataAddress);
       }
     } catch (err) {
       console.error('[Webhook] Error processing event:', err.message, err.stack || '');
