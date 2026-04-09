@@ -1,6 +1,12 @@
 require('dotenv').config();
-process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.message); });
-process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.message, err.stack || '');
+  // do NOT exit — keep the bot running
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason?.message || reason);
+  // do NOT exit — keep the bot running
+});
 
 const { createBot } = require('./bot/bot');
 const { createServer, setWebhookBot } = require('./server/index');

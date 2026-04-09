@@ -452,15 +452,13 @@ async function pollDeposits(bot) {
           lastProcessedSig.set(user.deposit_ata, toProcess[toProcess.length - 1].signature);
         }
       } catch (err) {
-        if (!err.message?.includes('429')) {
-          console.error(`[Deposit] Error polling user ${user.telegram_id}:`, err.message);
-        }
+        console.error(`[Deposit] Error polling user ${user.telegram_id}:`, err.message);
       }
       await new Promise(r => setTimeout(r, 1500));
     }
   } catch (err) {
-    console.error('[Deposit] Poller error:', err?.message || err);
-    if (err?.stack) console.error('[Deposit] Stack:', err.stack);
+    // Never rethrow — a failed poll cycle must not crash the process
+    console.error('[Deposit] Poll cycle failed, will retry next interval:', err?.message || err);
   }
 }
 
