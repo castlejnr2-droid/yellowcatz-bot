@@ -26,9 +26,14 @@ function verifyHelius(req, res, next) {
 /**
  * POST /api/webhook/helius
  *
- * Helius Enhanced Transaction webhook. Fires immediately when any transaction
- * touches a monitored address (the token mint). We filter for transfers into
- * known user ATAs, credit the user, then sweep to hot wallet.
+ * Helius Enhanced Transaction webhook. Token-2022 transfers do NOT populate
+ * tokenTransfers in the Helius payload, so we parse deposits from the raw
+ * meta.preTokenBalances / meta.postTokenBalances instead.
+ *
+ * For each account whose YC balance increased:
+ *   1. Resolve its address from transaction.message.accountKeys[accountIndex]
+ *   2. Look up the matching user in the DB by deposit_ata
+ *   3. Credit the user and trigger a sweep to the hot wallet
  */
 router.post('/helius', (req, res, next) => {
   const auth = req.headers['authorization'];
@@ -36,8 +41,7 @@ router.post('/helius', (req, res, next) => {
     `[Webhook] Incoming POST /api/webhook/helius` +
     ` | ip=${req.ip}` +
     ` | auth=${auth ? `present (${auth.length} chars)` : 'MISSING'}` +
-    ` | content-type=${req.headers['content-type'] || 'none'}` +
-    ` | body-events=${Array.isArray(req.body) ? req.body.length : (req.body ? 1 : 0)}`
+    ` | events=${Array.isArray(req.body) ? req.body.length : (req.body ? 1 : 0)}`
   );
   next();
 }, verifyHelius, async (req, res) => {
@@ -47,40 +51,42 @@ router.post('/helius', (req, res, next) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
   const mintAddress = process.env.YELLOWCATZ_TOKEN_MINT;
 
-  console.log(`[Webhook] Processing ${events.length} event(s) | YELLOWCATZ_TOKEN_MINT=${mintAddress || 'NOT SET'}`);
-
-  // Dump the raw payload of the first event so we can verify field names
-  if (events[0]) {
-    const e0 = events[0];
-    console.log(`[Webhook] RAW event[0] keys: ${Object.keys(e0).join(', ')}`);
-    console.log(`[Webhook] event[0].type=${e0.type} | signature=${String(e0.signature || '').slice(0, 16)}...`);
-    const transfers = e0.tokenTransfers || e0.token_transfers || [];
-    console.log(`[Webhook] event[0].tokenTransfers count: ${transfers.length}`);
-    if (transfers[0]) {
-      console.log(`[Webhook] tokenTransfers[0] keys: ${Object.keys(transfers[0]).join(', ')}`);
-      console.log(`[Webhook] tokenTransfers[0] = ${JSON.stringify(transfers[0])}`);
-    }
-  }
+  console.log(`[Webhook] Processing ${events.length} event(s) | mint=${mintAddress || 'NOT SET'}`);
 
   for (const event of events) {
     try {
       const signature = event.signature;
-      const transfers = event.tokenTransfers || event.token_transfers || [];
 
-      for (const transfer of transfers) {
-        // Only care about transfers of our token into a token account
-        if (transfer.mint !== mintAddress) {
-          console.log(`[Webhook] SKIP transfer — mint mismatch: got=${transfer.mint} want=${mintAddress}`);
+      // Resolve account key list — handles both legacy and versioned transactions
+      const message = event.transaction?.message;
+      const rawKeys = message?.staticAccountKeys ?? message?.accountKeys ?? [];
+      const accountKeys = rawKeys.map(k => (typeof k === 'string' ? k : k?.pubkey ?? String(k)));
+
+      const pre  = event.meta?.preTokenBalances  ?? [];
+      const post = event.meta?.postTokenBalances ?? [];
+
+      console.log(`[Webhook] tx=${String(signature).slice(0, 16)}... | accounts=${accountKeys.length} | preBalances=${pre.length} | postBalances=${post.length}`);
+
+      for (const postBal of post) {
+        // Only our mint
+        if (postBal.mint !== mintAddress) continue;
+
+        const accountIndex = postBal.accountIndex;
+        const ataAddress   = accountKeys[accountIndex];
+        if (!ataAddress) {
+          console.log(`[Webhook] SKIP — no accountKey at index ${accountIndex}`);
           continue;
         }
-        const ataAddress = transfer.toTokenAccount;
-        const amount = Number(transfer.tokenAmount);
-        if (!ataAddress || !amount || amount <= 0) {
-          console.log(`[Webhook] SKIP transfer — invalid ataAddress=${ataAddress} amount=${amount}`);
-          continue;
-        }
 
-        console.log(`[Webhook] Matched transfer: to=${ataAddress} amount=${amount} mint=${transfer.mint}`);
+        // Calculate how much was received (UI amount)
+        const preBal    = pre.find(p => p.accountIndex === accountIndex);
+        const preAmount  = Number(preBal?.uiTokenAmount?.uiAmount  ?? 0);
+        const postAmount = Number(postBal.uiTokenAmount?.uiAmount  ?? 0);
+        const delta      = postAmount - preAmount;
+
+        console.log(`[Webhook] Account[${accountIndex}] ${ataAddress.slice(0, 8)}... | pre=${preAmount} post=${postAmount} delta=${delta}`);
+
+        if (delta <= 0) continue;
 
         // Find which user owns this ATA
         const userRes = await query(
@@ -89,15 +95,11 @@ router.post('/helius', (req, res, next) => {
         );
         if (!userRes.rows[0]) {
           console.log(`[Webhook] SKIP — no user in DB with deposit_ata=${ataAddress}`);
-          // Log nearby ATAs to catch near-misses (old vs new address after migration)
-          const nearby = await query(
-            'SELECT telegram_id, deposit_ata FROM users WHERE deposit_ata IS NOT NULL LIMIT 5'
-          );
-          console.log(`[Webhook] Sample DB deposit_ata values: ${nearby.rows.map(r => r.deposit_ata).join(', ')}`);
           continue;
         }
 
         const telegramId = userRes.rows[0].telegram_id;
+        const amount     = delta;
 
         // Dedup — signature is unique per on-chain tx
         const already = await query('SELECT id FROM deposits WHERE tx_signature = $1', [signature]);
