@@ -3,7 +3,7 @@ const { validateSolanaAddress } = require('../../solana/withdraw');
 const { getOrCreateUserDepositATA } = require('../../solana/depositPoller');
 const { formatBalance } = require('../commands/start');
 
-const MIN_WITHDRAW = 1000;
+const MIN_WITHDRAW = 5000;
 
 const userStates = new Map();
 function setState(telegramId, state) { userStates.set(String(telegramId), state); }
