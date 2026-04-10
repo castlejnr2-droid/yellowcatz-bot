@@ -127,7 +127,7 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
 const resultText =
   `⚔️ *Battle Result*\n\n` +
   `🏆 Winner: *${winnerName}*\n` +
-  `💔 Loser: *${loserName}*\n` +
+  `⚔️ Fell in battle: *${loserName}*\n` +
   `💰 Prize: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
   `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
   `📊 Total pot was: \`${formatBalance(pot)}\` $YC`;
