@@ -123,12 +123,14 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
   const { pot, fee, payout } = result;
 
-  const resultText =
-    `⚔️ *Battle Result*\n\n` +
-    `🏆 Winner: *${winnerName}*\n` +
-    `💰 Prize: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
-    `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
-    `📊 Total pot was: \`${formatBalance(pot)}\` $YC`;
+
+const resultText =
+  `⚔️ *Battle Result*\n\n` +
+  `🏆 Winner: *${winnerName}*\n` +
+  `💔 Loser: *${loserName}*\n` +
+  `💰 Prize: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
+  `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
+  `📊 Total pot was: \`${formatBalance(pot)}\` $YC`;
 
   if (messageId) {
     try { await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }); }
