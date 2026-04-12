@@ -560,10 +560,10 @@ const wallet = getHotWallet();
 
   
 for (const [ataAddress, telegramId] of addressMap) {
+  await new Promise(r => setTimeout(r, 400));
   try {
     const depositPubkey = new PublicKey(ataAddress);
-    const ataPublicKey = depositPubkey; // ataAddress is already the ATA, not the owner
-      
+    const ataPublicKey = depositPubkey;  
 
     
 
