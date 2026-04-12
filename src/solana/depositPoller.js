@@ -114,16 +114,9 @@ function getUserDepositKeypair(telegramId) {
  */
 function getUserDepositAddress(telegramId) {
   const depositKeypair = getUserDepositKeypair(telegramId);
-  const mint = getTokenMint();
-  const ata = getAssociatedTokenAddressSync(
-    mint,
-    depositKeypair.publicKey,
-    false,
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-  return ata.toBase58();
+  return depositKeypair.publicKey.toBase58();
 }
+
 
 /**
  * Check SOL balance of a deposit wallet and top it up if below 0.002 SOL.
