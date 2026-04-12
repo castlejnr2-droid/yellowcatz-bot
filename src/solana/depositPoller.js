@@ -569,8 +569,7 @@ for (const [ataAddress, telegramId] of addressMap) {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    // Check on-chain balance — never trust DB
-    let rawBalance = 0;
+    
 
 // Check on-chain balance — never trust DB
 let rawBalance = 0;
