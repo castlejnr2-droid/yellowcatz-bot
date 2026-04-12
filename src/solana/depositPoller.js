@@ -563,7 +563,7 @@ for (const [ataAddress, telegramId] of addressMap) {
   await new Promise(r => setTimeout(r, 400));
   try {
     const depositPubkey = new PublicKey(ataAddress);
-    const ataPublicKey = depositPubkey;  
+    let ataPublicKey = depositPubkey;  
 
     
 
@@ -571,11 +571,20 @@ for (const [ataAddress, telegramId] of addressMap) {
 let rawBalance = 0;
 try {
   const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
-        rawBalance = Number(balResp?.value?.amount || 0);
-      } catch (balErr) {
-        console.log(`[Sweep] Could not check balance for ${ataAddress.slice(0, 8)}...: ${balErr.message}`);
-        continue;
-      }
+  rawBalance = Number(balResp?.value?.amount || 0);
+} catch (balErr) {
+  // Maybe stored address is owner, not ATA — derive ATA and try again
+  try {
+    const derivedAta = getAssociatedTokenAddressSync(mint, ataPublicKey, true, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    const balResp2 = await rpcCallWithRetry(() => conn.getTokenAccountBalance(derivedAta, 'confirmed'));
+    rawBalance = Number(balResp2?.value?.amount || 0);
+    ataPublicKey = derivedAta; // use derived ATA for the transfer
+  } catch {
+    console.log(`[Sweep] Could not check balance for ${ataAddress.slice(0, 8)}...: skipping`);
+    continue;
+  }
+}
+
       
 
       if (rawBalance === 0) {
