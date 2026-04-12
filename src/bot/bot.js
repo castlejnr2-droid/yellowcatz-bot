@@ -194,7 +194,7 @@ function createBot() {
       } else {
         active.forEach((r, i) => {
           const label = r.username ? `@${escMd(r.username)}` : (escMd(r.first_name) || `ID:${r.telegram_id}`);
-          text += `${i + 1}. ${label} — \`${formatBalance(r.total_deposited)}\` (${r.num_deposits} tx)\n`;
+          text += `${i + 1}. ${label} — \`${formatBalance(r.total_deposited)}\` (${r.num_deposits} tx)\n📥 ATA: \`${r.deposit_address || 'N/A'}\`\n`;
         });
       }
 
