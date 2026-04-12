@@ -472,8 +472,14 @@ async function sweepUserATA(telegramId) {
 
   await ensureMintDecimals();
 
-  const userAtaStr = getUserDepositAddress(telegramId);
-  const userAta = new PublicKey(userAtaStr);
+  const ownerPubkey = new PublicKey(getUserDepositAddress(telegramId));
+const userAta = getAssociatedTokenAddressSync(
+  mint,
+  ownerPubkey,
+  false,
+  TOKEN_2022_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID
+);
 
   // Use getTokenAccountBalance — works regardless of ATA state or token program
   let rawBalance = 0;
