@@ -21,15 +21,24 @@ async function rpcCallWithRetry(fn, maxRetries = 5) {
   throw new Error('Max RPC retries exceeded');
 }
 
-let connection;
+let readConnection;
+let writeConnection;
 let hotWallet;
 let tokenMint;
 
 function getConnection() {
-  if (!connection) {
-    connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com', 'confirmed');
+  if (!readConnection) {
+    readConnection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
   }
-  return connection;
+  return readConnection;
+}
+
+function getWriteConnection() {
+  if (!writeConnection) {
+    writeConnection = new Connection('https://rpc.ankr.com/solana', 'confirmed');
+  }
+  return writeConnection;
+}
 }
 
 function getHotWallet() {
@@ -60,6 +69,7 @@ async function validateSolanaAddress(address) {
 
 async function sendTokens(recipientAddress, amount) {
   const conn = getConnection();
+const writeConn = getWriteConnection();
   const wallet = getHotWallet();
   const mint = getTokenMint();
 
@@ -92,14 +102,14 @@ async function sendTokens(recipientAddress, amount) {
   );
 
   // Send transaction
-  const tx = new Transaction().add(transferIx);
-  const { blockhash } = await rpcCallWithRetry(() => conn.getLatestBlockhash());
+  const { blockhash } = await rpcCallWithRetry(() => writeConn.getLatestBlockhash());
+  
   tx.recentBlockhash = blockhash;
   tx.feePayer = wallet.publicKey;
   tx.sign(wallet);
 
-  const signature = await rpcCallWithRetry(() => conn.sendRawTransaction(tx.serialize()));
-  await rpcCallWithRetry(() => conn.confirmTransaction(signature, 'confirmed'));
+  const signature = await rpcCallWithRetry(() => writeConn.sendRawTransaction(tx.serialize()));
+  await rpcCallWithRetry(() => writeConn.confirmTransaction(signature, 'confirmed'));
 
   return signature;
 }
