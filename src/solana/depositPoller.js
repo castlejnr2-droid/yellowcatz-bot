@@ -570,7 +570,7 @@ async function sweepAll(bot) {
         console.log(`[Sweep] Could not check balance for ${ataAddress.slice(0, 8)}...: ${balErr.message}`);
         continue;
       }
-      }
+      
 
       if (rawBalance === 0) {
         console.log(`[Sweep] ${ataAddress.slice(0, 8)}... has 0 tokens on-chain, skipping`);
