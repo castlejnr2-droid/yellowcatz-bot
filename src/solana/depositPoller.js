@@ -565,7 +565,7 @@ for (const [ataAddress, telegramId] of addressMap) {
     const ataPublicKey = getAssociatedTokenAddressSync(
       mint,
       depositPubkey,
-      false,
+      true,
       TOKEN_2022_PROGRAM_ID,
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
