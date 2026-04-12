@@ -557,14 +557,25 @@ async function sweepAll(bot) {
 
   console.log(`[Sweep] Checking ${addressMap.size} deposit wallet(s)...`);
 
-  for (const [ataAddress, telegramId] of addressMap) {
-    try {
-      const ataPublicKey = new PublicKey(ataAddress);
+  
+for (const [ataAddress, telegramId] of addressMap) {
+  try {
+    const depositPubkey = new PublicKey(ataAddress);
+    const ataPublicKey = getAssociatedTokenAddressSync(
+      mint,
+      depositPubkey,
+      false,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
 
-      // Check on-chain balance — never trust DB
-      let rawBalance = 0;
-      try {
-        const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
+    // Check on-chain balance — never trust DB
+    let rawBalance = 0;
+
+// Check on-chain balance — never trust DB
+let rawBalance = 0;
+try {
+  const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
         rawBalance = Number(balResp?.value?.amount || 0);
       } catch (balErr) {
         console.log(`[Sweep] Could not check balance for ${ataAddress.slice(0, 8)}...: ${balErr.message}`);
