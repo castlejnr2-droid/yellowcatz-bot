@@ -39,7 +39,7 @@ function getWriteConnection() {
   }
   return writeConnection;
 }
-}
+
 
 function getHotWallet() {
   if (!hotWallet) {
