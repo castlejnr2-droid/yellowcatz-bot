@@ -566,8 +566,10 @@ async function sweepAll(bot) {
       try {
         const balResp = await rpcCallWithRetry(() => conn.getTokenAccountBalance(ataPublicKey, 'confirmed'));
         rawBalance = Number(balResp?.value?.amount || 0);
-      } catch {
-        continue; // ATA doesn't exist on-chain
+      } catch (balErr) {
+        console.log(`[Sweep] Could not check balance for ${ataAddress.slice(0, 8)}...: ${balErr.message}`);
+        continue;
+      }
       }
 
       if (rawBalance === 0) {
