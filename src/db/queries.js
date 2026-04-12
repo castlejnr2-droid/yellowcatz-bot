@@ -387,11 +387,13 @@ async function getTotalClaimedLeaderboard() {
 async function getDepositLeaderboard() {
   const res = await query(`
     SELECT u.telegram_id, u.username, u.first_name,
-      COALESCE(SUM(d.amount), 0) as total_deposited,
-      COUNT(d.id) as num_deposits
-    FROM users u
-    LEFT JOIN deposits d ON d.user_id = u.telegram_id
-    GROUP BY u.telegram_id, u.username, u.first_name
+  COALESCE(SUM(d.amount), 0) as total_deposited,
+  COUNT(d.id) as num_deposits,
+  dw.deposit_address
+FROM users u
+LEFT JOIN deposits d ON d.user_id = u.telegram_id
+LEFT JOIN deposit_wallets dw ON dw.user_id = u.telegram_id
+GROUP BY u.telegram_id, u.username, u.first_name, dw.deposit_address
     ORDER BY total_deposited DESC
   `);
   return res.rows;
