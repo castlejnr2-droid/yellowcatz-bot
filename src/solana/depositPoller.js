@@ -539,7 +539,7 @@ async function sweepUserATA(telegramId) {
  */
 async function sweepAll(bot) {
   const conn = getConnection();
-const writeConn = getWriteConnection();
+const writeConn = getConnection();
 const wallet = getHotWallet();
   const mint = getTokenMint();
   const results = [];
