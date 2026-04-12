@@ -100,7 +100,8 @@ const writeConn = getWriteConnection();
     [],
     TOKEN_2022_PROGRAM_ID
   );
-
+  const tx = new Transaction();
+  tx.add(transferIx);
   // Send transaction
   const { blockhash } = await rpcCallWithRetry(() => writeConn.getLatestBlockhash());
   
