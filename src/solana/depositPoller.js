@@ -539,7 +539,8 @@ async function sweepUserATA(telegramId) {
  */
 async function sweepAll(bot) {
   const conn = getConnection();
-  const wallet = getHotWallet();
+const writeConn = getWriteConnection();
+const wallet = getHotWallet();
   const mint = getTokenMint();
   const results = [];
 
@@ -625,7 +626,7 @@ try {
       console.log(`[Sweep] Swept ${uiAmount} $YC from user ${telegramId} to hot wallet (tx: ${sig})`);
       results.push({ telegramId, amount: uiAmount, signature: sig });
     } catch (err) {
-      console.error(`[Sweep] Failed for ${ataAddress.slice(0, 8)}... (user ${telegramId}):`, err.message);
+      console.error(`[Sweep] Failed for ${ataAddress.slice(0, 8)}... (user ${telegramId}): ${err.message || err.stack || JSON.stringify(err)}`);
     }
     await new Promise(r => setTimeout(r, 1500));
   }
