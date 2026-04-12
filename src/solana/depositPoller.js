@@ -562,13 +562,8 @@ const wallet = getHotWallet();
 for (const [ataAddress, telegramId] of addressMap) {
   try {
     const depositPubkey = new PublicKey(ataAddress);
-    const ataPublicKey = getAssociatedTokenAddressSync(
-      mint,
-      depositPubkey,
-      true,
-      TOKEN_2022_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
+    const ataPublicKey = depositPubkey; // ataAddress is already the ATA, not the owner
+      
 
     
 
