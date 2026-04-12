@@ -28,14 +28,14 @@ let tokenMint;
 
 function getConnection() {
   if (!readConnection) {
-    readConnection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+    readConnection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
   }
   return readConnection;
 }
 
 function getWriteConnection() {
   if (!writeConnection) {
-    writeConnection = new Connection('https://rpc.ankr.com/solana', 'confirmed');
+    writeConnection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
   }
   return writeConnection;
 }
