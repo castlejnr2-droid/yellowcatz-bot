@@ -1,7 +1,7 @@
 const db = require('../../db/queries');
 
 const MIN_COLLECT = 10;
-const MAX_COLLECT = 200;
+const MAX_COLLECT = 100;
 const REFERRAL_BONUS = 50;
 
 // Tiers ordered highest-first so the first match wins
