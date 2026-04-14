@@ -139,11 +139,45 @@ async function handleJoinRumble(bot, callbackQuery, rumbleId) {
   const { id: telegramId, username, first_name: firstName } = callbackQuery.from;
   const chatId = callbackQuery.message.chat.id;
 
-  const rumble = activeRumbles.get(rumbleId);
+  let rumble = activeRumbles.get(rumbleId);
+
+  // DB fallback if rumble not in memory (after bot restart)
   if (!rumble) {
-    return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ This rumble no longer exists.' });
+    try {
+      const { rows } = await pool.query(`
+        SELECT r.id, r.max_players, r.wager_amount, r.chat_id,
+               json_agg(json_build_object('userId', rp.user_id, 'username', rp.username, 'firstName', rp.first_name)) AS players
+        FROM rumbles r
+        JOIN rumble_players rp ON rp.rumble_id = r.id
+        WHERE r.id = $1 AND r.status = 'waiting'
+        GROUP BY r.id
+      `, [rumbleId]);
+
+      if (rows.length === 0) {
+        return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ This rumble no longer exists or has already started.' });
+      }
+
+      const dbRumble = rows[0];
+      rumble = {
+        chatId: parseInt(dbRumble.chat_id),
+        msgId: callbackQuery.message.message_id,
+        hostId: dbRumble.players && dbRumble.players[0] ? dbRumble.players[0].userId : null,
+        players: dbRumble.players || [],
+        maxPlayers: dbRumble.max_players,
+        wager: parseFloat(dbRumble.wager_amount),
+        pot: parseFloat(dbRumble.wager_amount) * (dbRumble.players ? dbRumble.players.length : 0),
+        timer: null
+      };
+
+      activeRumbles.set(rumbleId, rumble);
+      console.log(`[RUMBLE] Loaded rumble #${rumbleId} from database after restart`);
+    } catch (err) {
+      console.error('[RUMBLE] DB fallback failed:', err.message);
+      return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ This rumble no longer exists.' });
+    }
   }
 
+  // Normal join logic
   if (rumble.players.find(p => p.userId === String(telegramId))) {
     return bot.answerCallbackQuery(callbackQuery.id, { text: '⚠️ You already joined this rumble!' });
   }
@@ -190,7 +224,7 @@ async function handleJoinRumble(bot, callbackQuery, rumbleId) {
   });
 
   if (isFull) {
-    clearTimeout(rumble.timer);
+    if (rumble.timer) clearTimeout(rumble.timer);
     setTimeout(() => startRumble(bot, rumbleId), 2000);
   }
 }
