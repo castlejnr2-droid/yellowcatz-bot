@@ -3,7 +3,7 @@ const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWi
 const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
 const { handleDuelAccept, handleDuelDecline, handleDuelCancel } = require('../commands/duel');
-const { handleJoinRumble } = require('../commands/rumble');
+const { handleJoinRumble, handleStartRumbleEarly } = require('../commands/rumble');
 const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
 const { sendTokens } = require('../../solana/withdraw');
@@ -20,7 +20,8 @@ async function _handleCallback(bot, query) {
 
   // Duel callbacks manage answerCallbackQuery themselves (need show_alert for errors)
   const isDuelCb = data.startsWith('accept_duel_') || data.startsWith('decline_duel_') || data.startsWith('cancel_duel_');
-  if (!isDuelCb) {
+  const isRumbleStartCb = data.startsWith('start_rumble_');
+  if (!isDuelCb && !isRumbleStartCb) {
     try { await bot.answerCallbackQuery(queryId); } catch {}
   }
   const msgId = message.message_id;
@@ -151,12 +152,16 @@ async function _handleCallback(bot, query) {
     const duelId = parseInt(data.replace('cancel_duel_', ''));
     return await handleDuelCancel(bot, from, query, duelId);
   }
-  // — Rumble —
+
+  // ── Rumble ──
   if (data.startsWith('join_rumble_')) {
     const rumbleId = parseInt(data.replace('join_rumble_', ''));
     return await handleJoinRumble(bot, query, rumbleId);
   }
-  
+  if (data.startsWith('start_rumble_')) {
+    const rumbleId = parseInt(data.replace('start_rumble_', ''));
+    return await handleStartRumbleEarly(bot, query, rumbleId);
+  }
 
   // ── Leaderboard ──
   if (data === 'menu_leaderboard') return await showLeaderboard(bot, chatId, msgId);
