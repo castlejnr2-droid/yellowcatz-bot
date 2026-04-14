@@ -38,6 +38,16 @@ async function handleCollect(bot, msg) {
 
   const user = await db.getOrCreateUser({ telegramId, username, firstName });
   const tier = getTier(user.total_collected);
+  // Require minimum 5,000 $YC gamble balance to collect
+if (Number(user.gamble_balance || 0) < 5000) {
+  return bot.sendMessage(chatId,
+    `🚫 *Insufficient Gamble Balance*\n\n` +
+    `You need at least *5,000 $YC* in your Gamble balance to collect.\n\n` +
+    `Your current Gamble balance: *${Number(user.gamble_balance || 0).toLocaleString()} $YC*\n\n` +
+    `_Deposit $YC to your wallet and transfer to Gamble balance to start collecting!_`,
+    { parse_mode: 'Markdown' }
+  );
+}
 
   // Check cooldown
   if (user.last_collect_at) {
