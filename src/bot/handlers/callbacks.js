@@ -140,7 +140,7 @@ async function _handleCallback(bot, query) {
     const rumbleId = parseInt(data.replace('join_rumble_', ''));
     return await handleJoinRumble(bot, query, rumbleId);
   }
-  }
+  
 
   // ── Leaderboard ──
   if (data === 'menu_leaderboard') return await showLeaderboard(bot, chatId, msgId);
