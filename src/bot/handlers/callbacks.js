@@ -26,26 +26,31 @@ async function _handleCallback(bot, query) {
   const msgId = message.message_id;
 
   async function edit(text, opts = {}) {
+  const editOptions = {
+    chat_id: chatId,
+    message_id: msgId,
+    ...opts
+  };
+
+  // Only add parse_mode if not already provided in opts
+  if (editOptions.parse_mode === undefined) {
+    editOptions.parse_mode = 'Markdown';
+  }
+
   try {
-    await bot.editMessageText(text, {
-      chat_id: chatId,
-      message_id: msgId,
-      ...opts
-    });
+    await bot.editMessageText(text, editOptions);
   } catch (err) {
     // If message content is identical, Telegram throws "not modified" — just ignore it
     if (err && err.message && err.message.includes('message is not modified')) return;
 
+    // Fallback without parse_mode
     try {
-      await bot.sendMessage(chatId, text, {
-        ...opts
-      });
+      await bot.sendMessage(chatId, text, { ...opts });
     } catch (sendErr) {
       console.error('[EDIT FALLBACK ERROR]', sendErr.message);
     }
   }
 }
-
   // ── Main Menu ──
   if (data === 'back_main' || data === 'menu_refresh') {
     const user = await db.getOrCreateUser({ telegramId, username, firstName });
