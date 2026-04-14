@@ -2,12 +2,24 @@ const TelegramBot = require('node-telegram-bot-api');
 const { handleStart } = require('./commands/start');
 const { handleCollect } = require('./commands/collect');
 const { handleBattleCommand } = require('./commands/battle');
-const { handleRumbleCommand, handleJoinRumble } = require('./commands/rumble');
+const { handleRumbleCommand, handleJoinRumble, recoverRumbles } = require('./commands/rumble');
 const { startDuelExpiryJob } = require('./commands/duel');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
 const { sendTokens } = require('../solana/withdraw');
-const { startDepositPoller, sweepUserATA, sweepAll, findUserByATA, rescanUser, rescanAll, debugUserDeposit, forceSweepATA, creditDepositsBySignatures, getUserDepositAddress } = require('../solana/depositPoller');
+const { 
+  startDepositPoller, 
+  sweepUserATA, 
+  sweepAll, 
+  findUserByATA, 
+  rescanUser, 
+  rescanAll, 
+  debugUserDeposit, 
+  forceSweepATA, 
+  creditDepositsBySignatures, 
+  getUserDepositAddress 
+} = require('../solana/depositPoller');
+
 const db = require('../db/queries');
 const { pool } = require('../db');
 const { formatBalance } = require('./commands/start');
@@ -670,8 +682,12 @@ bot.onText(/\/rumble(.*)/, async (msg, match) => {
   // Start deposit poller
   startDepositPoller(bot);
 
-  // Start duel expiry job (checks every 60s)
+    // Start duel expiry job (checks every 60s)
   startDuelExpiryJob(bot);
+
+  // Recover any stuck 'waiting' rumbles when the bot boots up
+  // This prevents the issue you had with stuck rumbles on Railway
+  recoverRumbles(bot);
 
   console.log('✅ YellowCatz Bot is running!');
   return bot;
