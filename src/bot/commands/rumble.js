@@ -7,8 +7,13 @@ const MIN_WAGER = 100;
 
 const activeRumbles = new Map();
 
+// Safe escaping for MarkdownV2
+function escapeMarkdownV2(text) {
+  if (!text) return '';
+  return String(text).replace(/[_*[\]()~`>#+\-={}|.!]/g, '\\$&');
+}
+
 // Called once on bot startup — cleans up any rumbles left in 'waiting' state
-// from a previous deployment/crash
 async function recoverRumbles(bot) {
   try {
     const { rows: stuckRumbles } = await pool.query(
@@ -29,26 +34,28 @@ async function recoverRumbles(bot) {
 
     for (const rumble of stuckRumbles) {
       // Refund each player
-      for (const player of rumble.players) {
+      for (const player of rumble.players || []) {
         await pool.query(
           'UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
           [rumble.wager_amount, player.userId]
         );
       }
 
-      // Mark cancelled in DB
+      // Mark as cancelled
       await pool.query('UPDATE rumbles SET status = $1 WHERE id = $2', ['cancelled', rumble.id]);
 
-      console.log(`[RUMBLE RECOVERY] Cancelled rumble #${rumble.id}, refunded ${rumble.players.length} player(s).`);
+      console.log(`[RUMBLE RECOVERY] Cancelled rumble #${rumble.id}, refunded ${rumble.players?.length || 0} player(s).`);
 
-      // Notify the chat if we have a chat_id stored
+      // Notify the chat
       if (rumble.chat_id && bot) {
         try {
           await bot.sendMessage(rumble.chat_id,
             `⏰ *Rumble #${rumble.id} was cancelled* — the bot restarted before it could begin.\nAll wagers have been refunded.`,
-            { parse_mode: 'Markdown' }
+            { parse_mode: 'MarkdownV2' }
           );
-        } catch {}
+        } catch (e) {
+          console.log(`[RUMBLE RECOVERY] Could not notify chat:`, e.message);
+        }
       }
     }
 
@@ -64,13 +71,13 @@ async function handleRumbleCommand(bot, msg, args) {
 
   if (!args || args.length < 2) {
     return bot.sendMessage(chatId,
-      `🥊 *Rumble Mode*\n\n` +
+      `🥊 *RUMBLE MODE*\n\n` +
       `Usage: \`/rumble <players> <wager>\`\n\n` +
       `Example: \`/rumble 10 5000\`\n` +
       `• Min players: ${MIN_PLAYERS}, Max: ${MAX_PLAYERS}\n` +
       `• Min wager: ${MIN_WAGER} $YC\n` +
       `• Last player standing wins the entire pot!`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'MarkdownV2' }
     );
   }
 
@@ -78,17 +85,11 @@ async function handleRumbleCommand(bot, msg, args) {
   const wager = parseFloat(args[1]);
 
   if (isNaN(maxPlayers) || maxPlayers < MIN_PLAYERS || maxPlayers > MAX_PLAYERS) {
-    return bot.sendMessage(chatId,
-      `❌ Player count must be between ${MIN_PLAYERS} and ${MAX_PLAYERS}.`,
-      { parse_mode: 'Markdown' }
-    );
+    return bot.sendMessage(chatId, `❌ Player count must be between ${MIN_PLAYERS} and ${MAX_PLAYERS}.`, { parse_mode: 'MarkdownV2' });
   }
 
   if (isNaN(wager) || wager < MIN_WAGER) {
-    return bot.sendMessage(chatId,
-      `❌ Minimum wager is ${MIN_WAGER} $YC.`,
-      { parse_mode: 'Markdown' }
-    );
+    return bot.sendMessage(chatId, `❌ Minimum wager is ${MIN_WAGER} $YC.`, { parse_mode: 'MarkdownV2' });
   }
 
   const user = await db.getOrCreateUser({ telegramId, username, firstName });
@@ -96,7 +97,7 @@ async function handleRumbleCommand(bot, msg, args) {
   if ((user.gamble_balance || 0) < wager) {
     return bot.sendMessage(chatId,
       `🐱 *Insufficient Gamble Balance!*\n\nYou need \`${wager}\` but only have \`${user.gamble_balance}\` $YC.`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'MarkdownV2' }
     );
   }
 
@@ -119,7 +120,7 @@ async function handleRumbleCommand(bot, msg, args) {
   const text = getRumbleLobbyText(rumbleId, maxPlayers, wager, pot, players);
 
   const sentMsg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'MarkdownV2',
     reply_markup: {
       inline_keyboard: [[
         { text: `⚔️ Join Rumble (#${rumbleId})`, callback_data: `join_rumble_${rumbleId}` }
@@ -160,9 +161,11 @@ async function handleJoinRumble(bot, callbackQuery, rumbleId) {
     });
   }
 
+  // Deduct wager
   await pool.query('UPDATE users SET gamble_balance = gamble_balance - $1 WHERE telegram_id = $2',
     [rumble.wager, String(telegramId)]);
 
+  // Add player to DB
   await pool.query(
     'INSERT INTO rumble_players (rumble_id, user_id, username, first_name) VALUES ($1, $2, $3, $4)',
     [rumbleId, String(telegramId), username, firstName]
@@ -189,7 +192,7 @@ async function handleJoinRumble(bot, callbackQuery, rumbleId) {
   await bot.editMessageText(text, {
     chat_id: chatId,
     message_id: rumble.msgId,
-    parse_mode: 'Markdown',
+    parse_mode: 'MarkdownV2',
     reply_markup: { inline_keyboard: inlineKeyboard }
   });
 
@@ -226,10 +229,11 @@ async function handleStartRumbleEarly(bot, callbackQuery, rumbleId) {
   rumble.pot = rumble.wager * rumble.players.length;
 
   const finalText = getRumbleLobbyText(rumbleId, rumble.maxPlayers, rumble.wager, rumble.pot, rumble.players, true);
+
   await bot.editMessageText(finalText, {
     chat_id: rumble.chatId,
     message_id: rumble.msgId,
-    parse_mode: 'Markdown',
+    parse_mode: 'MarkdownV2',
     reply_markup: { inline_keyboard: [] }
   });
 
@@ -248,14 +252,14 @@ async function startRumble(bot, rumbleId) {
 
   await bot.sendMessage(rumble.chatId,
     `🥊 *RUMBLE #${rumbleId} BEGINS!*\n💰 Pot: *${rumble.pot.toLocaleString()} $YC*\n👥 ${survivors.length} fighters enter!`,
-    { parse_mode: 'Markdown' }
+    { parse_mode: 'MarkdownV2' }
   );
   await sleep(2000);
 
   while (survivors.length > 1) {
     await bot.sendMessage(rumble.chatId,
       `⚔️ *Round ${roundNum}* — ${survivors.length} fighters remain!`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'MarkdownV2' }
     );
     await sleep(1500);
 
@@ -267,7 +271,7 @@ async function startRumble(bot, rumbleId) {
         nextSurvivors.push(survivors[i]);
         await bot.sendMessage(rumble.chatId,
           `🛡️ *${getDisplayName(survivors[i])}* gets a bye this round!`,
-          { parse_mode: 'Markdown' }
+          { parse_mode: 'MarkdownV2' }
         );
         await sleep(1000);
         continue;
@@ -278,18 +282,14 @@ async function startRumble(bot, rumbleId) {
       const p1Roll = Math.floor(Math.random() * 6) + 1;
       const p2Roll = Math.floor(Math.random() * 6) + 1;
 
-      let winner, loser;
-      if (p1Roll >= p2Roll) {
-        winner = p1; loser = p2;
-      } else {
-        winner = p2; loser = p1;
-      }
+      let winner = p1Roll >= p2Roll ? p1 : p2;
+      let loser = p1Roll >= p2Roll ? p2 : p1;
 
       nextSurvivors.push(winner);
 
       await bot.sendMessage(rumble.chatId,
         `🎲 *${getDisplayName(p1)}* [${p1Roll}] vs *${getDisplayName(p2)}* [${p2Roll}]\n💀 *${getDisplayName(loser)}* has been eliminated!`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'MarkdownV2' }
       );
       await sleep(1500);
     }
@@ -309,7 +309,7 @@ async function startRumble(bot, rumbleId) {
 
   await bot.sendMessage(rumble.chatId,
     `🏆 *RUMBLE OVER!*\n\n👑 *${getDisplayName(winner)}* is the last one standing!\n\n💰 *${rumble.pot.toLocaleString()} $YC* added to their Gamble balance!\n\n_GG to all fighters!_ 🐱`,
-    { parse_mode: 'Markdown' }
+    { parse_mode: 'MarkdownV2' }
   );
 
   activeRumbles.delete(rumbleId);
@@ -328,7 +328,7 @@ async function cancelRumble(bot, rumbleId) {
 
   await bot.sendMessage(rumble.chatId,
     `⏰ *Rumble #${rumbleId} cancelled* — not enough players joined in time.\nAll wagers have been refunded.`,
-    { parse_mode: 'Markdown' }
+    { parse_mode: 'MarkdownV2' }
   );
 
   activeRumbles.delete(rumbleId);
@@ -336,6 +336,7 @@ async function cancelRumble(bot, rumbleId) {
 
 function getRumbleLobbyText(rumbleId, maxPlayers, wager, pot, players, started = false) {
   const playerList = players.map((p, i) => `${i + 1}. ${getDisplayName(p)}`).join('\n');
+
   const footer = started
     ? `_Host started early — battle beginning now!_`
     : players.length >= MIN_PLAYERS
@@ -351,7 +352,11 @@ function getRumbleLobbyText(rumbleId, maxPlayers, wager, pot, players, started =
 }
 
 function getDisplayName(player) {
-  return player.username ? `@${player.username}` : (player.firstName || player.first_name || 'Unknown');
+  let name = player.username 
+    ? `@${player.username}` 
+    : (player.firstName || player.first_name || 'Unknown');
+
+  return escapeMarkdownV2(name);
 }
 
 function shuffle(arr) {
