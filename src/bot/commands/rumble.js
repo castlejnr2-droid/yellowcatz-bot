@@ -7,6 +7,57 @@ const MIN_WAGER = 100;
 
 const activeRumbles = new Map();
 
+// Called once on bot startup — cleans up any rumbles left in 'waiting' state
+// from a previous deployment/crash
+async function recoverRumbles(bot) {
+  try {
+    const { rows: stuckRumbles } = await pool.query(
+      `SELECT r.id, r.wager_amount, r.chat_id,
+              json_agg(json_build_object('userId', rp.user_id, 'username', rp.username, 'firstName', rp.first_name)) AS players
+       FROM rumbles r
+       JOIN rumble_players rp ON rp.rumble_id = r.id
+       WHERE r.status = 'waiting'
+       GROUP BY r.id`
+    );
+
+    if (stuckRumbles.length === 0) {
+      console.log('[RUMBLE RECOVERY] No stuck rumbles found.');
+      return;
+    }
+
+    console.log(`[RUMBLE RECOVERY] Found ${stuckRumbles.length} stuck rumble(s) — refunding and cancelling...`);
+
+    for (const rumble of stuckRumbles) {
+      // Refund each player
+      for (const player of rumble.players) {
+        await pool.query(
+          'UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+          [rumble.wager_amount, player.userId]
+        );
+      }
+
+      // Mark cancelled in DB
+      await pool.query('UPDATE rumbles SET status = $1 WHERE id = $2', ['cancelled', rumble.id]);
+
+      console.log(`[RUMBLE RECOVERY] Cancelled rumble #${rumble.id}, refunded ${rumble.players.length} player(s).`);
+
+      // Notify the chat if we have a chat_id stored
+      if (rumble.chat_id && bot) {
+        try {
+          await bot.sendMessage(rumble.chat_id,
+            `⏰ *Rumble #${rumble.id} was cancelled* — the bot restarted before it could begin.\nAll wagers have been refunded.`,
+            { parse_mode: 'Markdown' }
+          );
+        } catch {}
+      }
+    }
+
+    console.log('[RUMBLE RECOVERY] Done.');
+  } catch (err) {
+    console.error('[RUMBLE RECOVERY] Error:', err.message);
+  }
+}
+
 async function handleRumbleCommand(bot, msg, args) {
   const { id: telegramId, username, first_name: firstName } = msg.from;
   const chatId = msg.chat.id;
@@ -53,8 +104,8 @@ async function handleRumbleCommand(bot, msg, args) {
     [wager, String(telegramId)]);
 
   const res = await pool.query(
-    'INSERT INTO rumbles (max_players, wager_amount, status) VALUES ($1, $2, $3) RETURNING id',
-    [maxPlayers, wager, 'waiting']
+    'INSERT INTO rumbles (max_players, wager_amount, status, chat_id) VALUES ($1, $2, $3, $4) RETURNING id',
+    [maxPlayers, wager, 'waiting', String(chatId)]
   );
   const rumbleId = res.rows[0].id;
 
@@ -79,7 +130,7 @@ async function handleRumbleCommand(bot, msg, args) {
   activeRumbles.set(rumbleId, {
     chatId,
     msgId: sentMsg.message_id,
-    hostId: String(telegramId),           // ← track who created it
+    hostId: String(telegramId),
     players,
     maxPlayers,
     wager,
@@ -123,12 +174,9 @@ async function handleJoinRumble(bot, callbackQuery, rumbleId) {
 
   const isFull = rumble.players.length >= rumble.maxPlayers;
   const canStartEarly = !isFull && rumble.players.length >= MIN_PLAYERS;
-
-  // Recalculate displayed pot based on current players
   const displayPot = rumble.wager * rumble.players.length;
   const text = getRumbleLobbyText(rumbleId, rumble.maxPlayers, rumble.wager, displayPot, rumble.players);
 
-  // Build button rows
   let inlineKeyboard = [];
   if (!isFull) {
     const row = [{ text: `⚔️ Join Rumble (#${rumbleId})`, callback_data: `join_rumble_${rumbleId}` }];
@@ -159,7 +207,6 @@ async function handleStartRumbleEarly(bot, callbackQuery, rumbleId) {
     return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ This rumble no longer exists.' });
   }
 
-  // Only the host can start early
   if (String(telegramId) !== rumble.hostId) {
     return bot.answerCallbackQuery(callbackQuery.id, {
       text: '⛔ Only the rumble host can start early!',
@@ -176,10 +223,8 @@ async function handleStartRumbleEarly(bot, callbackQuery, rumbleId) {
 
   await bot.answerCallbackQuery(callbackQuery.id, { text: '🚀 Starting rumble early!' });
 
-  // Recalculate pot based on actual players who joined
   rumble.pot = rumble.wager * rumble.players.length;
 
-  // Remove buttons and update lobby message
   const finalText = getRumbleLobbyText(rumbleId, rumble.maxPlayers, rumble.wager, rumble.pot, rumble.players, true);
   await bot.editMessageText(finalText, {
     chat_id: rumble.chatId,
@@ -322,4 +367,4 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-module.exports = { handleRumbleCommand, handleJoinRumble, handleStartRumbleEarly };
+module.exports = { handleRumbleCommand, handleJoinRumble, handleStartRumbleEarly, recoverRumbles };
