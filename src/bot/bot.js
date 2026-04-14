@@ -2,6 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { handleStart } = require('./commands/start');
 const { handleCollect } = require('./commands/collect');
 const { handleBattleCommand } = require('./commands/battle');
+const { handleRumbleCommand, handleJoinRumble } = require('./commands/rumble');
 const { startDuelExpiryJob } = require('./commands/duel');
 const { handleCallbackQuery } = require('./handlers/callbacks');
 const { handleTextInput, handleDeposit } = require('./handlers/funds');
