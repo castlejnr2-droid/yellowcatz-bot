@@ -3,6 +3,7 @@ const { showFundsMenu, handleToSpot, handleToGamble, handleWithdrawStart, showWi
 const { showReferralMenu } = require('./referral');
 const { showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle } = require('../commands/battle');
 const { handleDuelAccept, handleDuelDecline, handleDuelCancel } = require('../commands/duel');
+const { handleJoinRumble } = require('../commands/rumble');
 const db = require('../../db/queries');
 const { formatBalance } = require('../commands/start');
 const { sendTokens } = require('../../solana/withdraw');
@@ -133,6 +134,12 @@ async function _handleCallback(bot, query) {
   if (data.startsWith('cancel_duel_')) {
     const duelId = parseInt(data.replace('cancel_duel_', ''));
     return await handleDuelCancel(bot, from, query, duelId);
+  }
+  // — Rumble —
+  if (data.startsWith('join_rumble_')) {
+    const rumbleId = parseInt(data.replace('join_rumble_', ''));
+    return await handleJoinRumble(bot, query, rumbleId);
+  }
   }
 
   // ── Leaderboard ──
