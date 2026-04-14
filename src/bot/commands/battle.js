@@ -4,11 +4,27 @@ const { handleDirectChallenge } = require('./duel');
 
 const MIN_WAGER = 10;
 
+// Safe HTML escaping
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function editOrSend(bot, chatId, msgId, text, opts = {}) {
+  const options = { parse_mode: 'HTML', ...opts };
   if (msgId) {
-    try { return await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', ...opts }); } catch {}
+    try {
+      return await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, ...options });
+    } catch (e) {
+      console.error('[BATTLE EDIT ERROR]', e.message);
+    }
   }
-  return await bot.sendMessage(chatId, text, { parse_mode: 'Markdown', ...opts });
+  return await bot.sendMessage(chatId, text, options);
 }
 
 async function handleBattleCommand(bot, msg, args) {
@@ -19,33 +35,31 @@ async function handleBattleCommand(bot, msg, args) {
     return await showBattleMenu(bot, chatId, telegramId);
   }
 
-  // Detect direct challenge: any arg starts with '@'
   const usernameArg = args.find(a => a.startsWith('@'));
   const amountArg = args.find(a => !a.startsWith('@'));
 
   if (usernameArg) {
-    // /pvp @username <amount> — locked direct challenge
     const amount = parseFloat(amountArg);
     return await handleDirectChallenge(bot, msg, usernameArg, amount);
   }
 
-  // /pvp <amount> — existing open matchmaking (unchanged)
   const user = await db.getOrCreateUser({ telegramId, username, firstName });
   const amount = parseFloat(args[0]);
+
   if (isNaN(amount) || amount < MIN_WAGER) {
     return await bot.sendMessage(chatId,
-      `⚔️ *Battle Command*\n\nUsage:\n` +
-      `  \`/pvp <amount>\` — open matchmaking\n` +
-      `  \`/pvp @username <amount>\` — direct duel\n\n` +
-      `Minimum wager: \`${MIN_WAGER} $YC\``,
-      { parse_mode: 'Markdown' }
+      `⚔️ <b>Battle Command</b>\n\nUsage:\n` +
+      `  /pvp &lt;amount&gt; — open matchmaking\n` +
+      `  /pvp @username &lt;amount&gt; — direct duel\n\n` +
+      `Minimum wager: <b>${MIN_WAGER} $YC</b>`,
+      { parse_mode: 'HTML' }
     );
   }
 
   if ((user.gamble_balance || 0) < amount) {
     return await bot.sendMessage(chatId,
-      `🐱 *Insufficient Gamble Balance!*\n\nYou need \`${formatBalance(amount)}\` but only have \`${formatBalance(user.gamble_balance)}\` $YC.\n\nUse /collect to earn more!`,
-      { parse_mode: 'Markdown' }
+      `🐱 <b>Insufficient Gamble Balance!</b>\n\nYou need <b>${formatBalance(amount)}</b> but only have <b>${formatBalance(user.gamble_balance)}</b> $YC.\n\nUse /collect to earn more!`,
+      { parse_mode: 'HTML' }
     );
   }
 
@@ -53,8 +67,9 @@ async function handleBattleCommand(bot, msg, args) {
   const displayName = username ? `@${username}` : firstName || 'Someone';
 
   await bot.sendMessage(chatId,
-    `⚔️ ${displayName} has challenged someone to PvP for ${formatBalance(amount)} $YC!\nClick the button below to accept.`,
+    `⚔️ ${escapeHtml(displayName)} has challenged someone to PvP for ${formatBalance(amount)} $YC!\nClick the button below to accept.`,
     {
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [{ text: '⚔️ Accept Challenge', callback_data: `battle_accept_${battleId}` }]
@@ -64,35 +79,40 @@ async function handleBattleCommand(bot, msg, args) {
   );
 }
 
-async function showBattleMenu(bot, chatId, telegramId, msgId) {
+async function showBattleMenu(bot, chatId, telegramId, msgId = null) {
   const battles = await db.getOpenBattles(telegramId);
   const stats = await db.getBattleStats(telegramId);
 
-  let text = `⚔️ *Battle Arena*\n\n`;
-  text += `📊 *Your Stats:*\n`;
-  text += `🏆 Wins: \`${stats.wins}\` | 💀 Losses: \`${stats.losses}\`\n`;
-  text += `💰 Total Won: \`${formatBalance(stats.earned)} $YC\`\n\n`;
+  let text = `⚔️ <b>Battle Arena</b>\n\n`;
+  text += `📊 <b>Your Stats:</b>\n`;
+  text += `🏆 Wins: <b>${stats.wins}</b> | 💀 Losses: <b>${stats.losses}</b>\n`;
+  text += `💰 Total Won: <b>${formatBalance(stats.earned)}</b> $YC\n\n`;
 
   if (battles.length > 0) {
-    text += `🎯 *Open Battles:*\n`;
+    text += `🎯 <b>Open Battles:</b>\n`;
     battles.forEach(b => {
       const name = b.challenger_name || b.challenger_first || 'Unknown';
-      text += `• #${b.id} — \`${formatBalance(b.wager_amount)} $YC\` by @${name}\n`;
+      text += `• #${b.id} — <b>${formatBalance(b.wager_amount)} $YC</b> by @${escapeHtml(name)}\n`;
     });
-    text += `\n_Use the buttons to accept a battle_`;
+    text += `\n<i>Use the buttons to accept a battle</i>`;
   } else {
-    text += `_No open battles right now._\n_Create one with /battle <amount>_`;
+    text += `<i>No open battles right now.</i>\nCreate one with /battle &lt;amount&gt;`;
   }
 
   const keyboard = [];
   battles.slice(0, 3).forEach(b => {
     const name = b.challenger_name || b.challenger_first || 'Unknown';
-    keyboard.push([{ text: `⚔️ Accept #${b.id} (${formatBalance(b.wager_amount)} $YC)`, callback_data: `battle_accept_${b.id}` }]);
+    keyboard.push([{
+      text: `⚔️ Accept #${b.id} (${formatBalance(b.wager_amount)} $YC)`,
+      callback_data: `battle_accept_${b.id}`
+    }]);
   });
   keyboard.push([{ text: '📜 My Battle History', callback_data: 'battle_history' }]);
   keyboard.push([{ text: '🏠 Back', callback_data: 'back_main' }]);
 
-  await editOrSend(bot, chatId, msgId, text, { reply_markup: { inline_keyboard: keyboard } });
+  await editOrSend(bot, chatId, msgId, text, {
+    reply_markup: { inline_keyboard: keyboard }
+  });
 }
 
 async function handleBattleAccept(bot, chatId, telegramId, username, firstName, battleId, messageId) {
@@ -100,20 +120,20 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const battle = await db.getBattleById(battleId);
 
   if (!battle || battle.status !== 'open') {
-    return await bot.sendMessage(chatId, `❌ This battle is no longer available!`);
+    return await bot.sendMessage(chatId, `❌ This battle is no longer available!`, { parse_mode: 'HTML' });
   }
 
   if (String(battle.challenger_id) === String(telegramId)) {
-    return await bot.sendMessage(chatId, `🐱 You can't battle yourself!`);
+    return await bot.sendMessage(chatId, `🐱 You can't battle yourself!`, { parse_mode: 'HTML' });
   }
 
   if ((user.gamble_balance || 0) < battle.wager_amount) {
-    return await bot.sendMessage(chatId, `🐱 You need ${formatBalance(battle.wager_amount)} $YC to accept!`);
+    return await bot.sendMessage(chatId, `🐱 You need <b>${formatBalance(battle.wager_amount)}</b> $YC to accept!`, { parse_mode: 'HTML' });
   }
 
   const result = await db.acceptBattle(battleId, telegramId);
   if (!result) {
-    return await bot.sendMessage(chatId, `❌ Could not accept battle.`);
+    return await bot.sendMessage(chatId, `❌ Could not accept battle.`, { parse_mode: 'HTML' });
   }
 
   const challengerUser = await db.getUser(battle.challenger_id);
@@ -123,30 +143,32 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
   const { pot, fee, payout } = result;
 
-
-const resultText =
-  `⚔️ *Battle Result*\n\n` +
-  `🏆 Winner: *${winnerName}*\n` +
-  `⚔️ Fell in battle: *${loserName}*\n` +
-  `💰 Prize: \`${formatBalance(payout)}\` $YC _(after 5% house fee)_\n` +
-  `🏠 House fee: \`${formatBalance(fee)}\` $YC\n` +
-  `📊 Total pot was: \`${formatBalance(pot)}\` $YC`;
+  const resultText = 
+    `⚔️ <b>Battle Result</b>\n\n` +
+    `🏆 Winner: <b>${escapeHtml(winnerName)}</b>\n` +
+    `⚔️ Fell in battle: <b>${escapeHtml(loserName)}</b>\n` +
+    `💰 Prize: <b>${formatBalance(payout)}</b> $YC <i>(after 5% house fee)</i>\n` +
+    `🏠 House fee: <b>${formatBalance(fee)}</b> $YC\n` +
+    `📊 Total pot was: <b>${formatBalance(pot)}</b> $YC`;
 
   if (messageId) {
-    try { await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }); }
-    catch { await bot.sendMessage(chatId, resultText, { parse_mode: 'Markdown' }); }
+    try {
+      await bot.editMessageText(resultText, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
+    } catch {
+      await bot.sendMessage(chatId, resultText, { parse_mode: 'HTML' });
+    }
   } else {
-    await bot.sendMessage(chatId, resultText, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, resultText, { parse_mode: 'HTML' });
   }
 
   const challengerWon = result.winner_id === String(battle.challenger_id);
   try {
     await bot.sendMessage(battle.challenger_id,
-      `⚔️ *${opponentName} accepted your PvP challenge!*\n\n` +
+      `⚔️ <b>${escapeHtml(opponentName)}</b> accepted your PvP challenge!\n\n` +
       (challengerWon
-        ? `🏆 You won \`${formatBalance(payout)}\` $YC! _(5% house fee deducted)_`
-        : `💀 You lost \`${formatBalance(battle.wager_amount)}\` $YC`),
-      { parse_mode: 'Markdown' }
+        ? `🏆 You won <b>${formatBalance(payout)}</b> $YC! <i>(5% house fee deducted)</i>`
+        : `💀 You lost <b>${formatBalance(battle.wager_amount)}</b> $YC`),
+      { parse_mode: 'HTML' }
     );
   } catch {}
 }
@@ -155,22 +177,25 @@ async function handleBattleHistory(bot, chatId, telegramId, msgId) {
   const battles = await db.getUserBattles(telegramId);
   if (battles.length === 0) {
     return await editOrSend(bot, chatId, msgId,
-      `⚔️ *Battle History*\n\n_No battles yet! Use /battle <amount> to start._`,
+      `⚔️ <b>Battle History</b>\n\nNo battles yet! Use /battle &lt;amount&gt; to start.`,
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Back', callback_data: 'back_main' }]] } }
     );
   }
 
-  let text = `⚔️ *Battle History* (last 10)\n\n`;
+  let text = `⚔️ <b>Battle History</b> (last 10)\n\n`;
   battles.forEach(b => {
     const won = b.winner_id === String(telegramId);
     const opponent = String(b.challenger_id) === String(telegramId)
       ? (b.opponent_name || b.opponent_first || 'Unknown')
       : (b.challenger_name || b.challenger_first || 'Unknown');
-    text += `${won ? '🏆' : '💀'} vs @${opponent} — \`${formatBalance(b.wager_amount)} $YC\` ${won ? 'WON' : 'LOST'}\n`;
+    text += `${won ? '🏆' : '💀'} vs @${escapeHtml(opponent)} — <b>${formatBalance(b.wager_amount)}</b> $YC ${won ? 'WON' : 'LOST'}\n`;
   });
 
   await editOrSend(bot, chatId, msgId, text, {
-    reply_markup: { inline_keyboard: [[{ text: '⚔️ Battle Arena', callback_data: 'menu_battles' }, { text: '🏠 Home', callback_data: 'back_main' }]] }
+    reply_markup: { inline_keyboard: [[
+      { text: '⚔️ Battle Arena', callback_data: 'menu_battles' },
+      { text: '🏠 Home', callback_data: 'back_main' }
+    ]] }
   });
 }
 
@@ -182,7 +207,7 @@ async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
   const success = await db.cancelBattle(battleId);
   if (success) {
     await editOrSend(bot, chatId, msgId,
-      `✅ Battle #${battleId} cancelled. Your wager of \`${formatBalance(battle.wager_amount)}\` $YC has been refunded.`,
+      `✅ Battle #${battleId} cancelled. Your wager of <b>${formatBalance(battle.wager_amount)}</b> $YC has been refunded.`,
       { reply_markup: { inline_keyboard: [[{ text: '🏠 Home', callback_data: 'back_main' }]] } }
     );
   } else {
