@@ -43,6 +43,11 @@ function createBot() {
   bot.onText(/\/deposit/, async (msg) => {
     await handleDeposit(bot, msg.chat.id, msg.from.id, null);
   });
+  // — /rumble —
+bot.onText(/\/rumble(.*)/, async (msg, match) => {
+  const args = match[1].trim().split(/\s+/).filter(Boolean);
+  await handleRumbleCommand(bot, msg, args);
+});
 
   // ── /battle or /PvP ──
   bot.onText(/\/(?:battle|[Pp][Vv][Pp])(?:\s+(.+))?/, async (msg, match) => {
