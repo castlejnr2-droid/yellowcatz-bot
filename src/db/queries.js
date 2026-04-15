@@ -249,7 +249,60 @@ async function acceptBattle(battleId, opponentId) {
   return { ...battle, opponent_id: opponentId, winner_id: winnerId, challenger_roll: challengerRoll, opponent_roll: opponentRoll, pot, fee, payout };
 }
 
-async function cancelBattle(battleId) {
+// ─── NEW CANCEL FUNCTIONS FOR THE FEATURE ───────────────────────────────────
+
+/**
+ * Get the user's open battle (only the host can cancel their own)
+ */
+async function getPendingBattleByHost(telegramId) {
+  const res = await query(`
+    SELECT * FROM battles 
+    WHERE challenger_id = $1 
+      AND status = 'open'
+    LIMIT 1
+  `, [String(telegramId)]);
+  return res.rows[0] || null;
+}
+
+/**
+ * Cancel any battle (used by admin or host after 30 minutes)
+ * Automatically refunds the wager to the challenger
+ */
+async function cancelBattleWithRefund(battleId, cancelledBy = null) {
+  const battle = await getBattleById(battleId);
+  if (!battle || battle.status !== 'open') return false;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Refund wager to challenger
+    await client.query('UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
+      [battle.wager_amount, battle.challenger_id]);
+
+    // Mark as cancelled
+    await client.query(`
+      UPDATE battles 
+      SET status = 'cancelled', 
+          cancelled_by = $1, 
+          updated_at = NOW() 
+      WHERE id = $2
+    `, [cancelledBy, battleId]);
+
+    await client.query('COMMIT');
+    console.log(`[Battle] Battle #${battleId} cancelled by ${cancelledBy || 'host'}. Refunded ${battle.wager_amount}`);
+    return true;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// ─── EXISTING FUNCTIONS (keep all of them) ───────────────────────────────────
+
+async function cancelBattle(battleId) {  // Keep your original one too
   const battle = await getBattleById(battleId);
   if (!battle || battle.status !== 'open') return false;
   const client = await pool.connect();
@@ -293,7 +346,8 @@ async function getBattleStats(telegramId) {
   return { wins, losses: total - wins, total, earned: earned * 2 };
 }
 
-// ─── REFERRALS ───────────────────────────────────────────────────────────────
+// ─── REFERRALS, LEADERBOARD, DUELS, HOUSE etc. (unchanged) ───────────────────
+// ... (all your existing referral, leaderboard, duel, and house functions remain exactly the same)
 
 async function creditReferral(referrerId, referredId, bonusAmount = 500) {
   const existing = await query('SELECT id FROM referrals WHERE referred_id = $1', [String(referredId)]);
@@ -326,8 +380,6 @@ async function getUserByReferralCode(code) {
   const res = await query('SELECT * FROM users WHERE referral_code = $1', [code]);
   return res.rows[0] || null;
 }
-
-// ─── LEADERBOARD ─────────────────────────────────────────────────────────────
 
 async function getTopCollectors(limit = 10) {
   try {
@@ -507,22 +559,18 @@ async function acceptDuel(duelId) {
     }
     const winnerId = challengerRoll > opponentRoll ? duel.challenger_id : duel.target_id;
 
-    // Lock target tokens
     await client.query(
       'UPDATE users SET gamble_balance = gamble_balance - $1, updated_at = NOW() WHERE telegram_id = $2',
       [duel.amount, duel.target_id]
     );
-    // Pay winner
     await client.query(
       'UPDATE users SET gamble_balance = gamble_balance + $1, updated_at = NOW() WHERE telegram_id = $2',
       [payout, winnerId]
     );
-    // House fee
     await client.query(
       'UPDATE house_balance SET balance = balance + $1, total_fees_collected = total_fees_collected + $1, updated_at = NOW()',
       [fee]
     );
-    // Mark completed
     await client.query("UPDATE duel_challenges SET status = 'completed' WHERE id = $1", [duelId]);
 
     await client.query('COMMIT');
@@ -668,6 +716,8 @@ async function getStats() {
   };
 }
 
+// ─── EXPORTS ─────────────────────────────────────────────────────────────────
+
 module.exports = {
   getUser, createUser, getOrCreateUser, updateUserBalances, getAllUsers, getTotalUserCount,
   recordCollection, getUserCollections, getTotalCollected,
@@ -679,5 +729,9 @@ module.exports = {
   getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats,
   getHouseBalance, withdrawFromHouse,
   getUserByUsername, getPendingDuelBetween, createDuelChallenge, getDuelChallenge,
-  setDuelMessageIds, acceptDuel, cancelDuel, declineDuel, getExpiredDuels, expireDuel
+  setDuelMessageIds, acceptDuel, cancelDuel, declineDuel, getExpiredDuels, expireDuel,
+  
+  // NEW exports for cancel feature
+  getPendingBattleByHost,
+  cancelBattleWithRefund
 };
