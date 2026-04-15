@@ -20,17 +20,13 @@ const {
   getUserDepositAddress 
 } = require('../solana/depositPoller');
 
-// NEW: Import the cancel commands
-const { cancelBattleCommand } = require('./commands/cancelbattle');
-const { adminCancelBattleCommand } = require('./commands/admincancelbattle');
-
 const db = require('../db/queries');
 const { pool } = require('../db');
 const { formatBalance } = require('./commands/start');
 
 require('dotenv').config();
 
-// Escape Telegram Markdown v1 special chars in user-provided text
+// Escape Telegram Markdown v1 special chars
 function escMd(str) {
   if (!str) return '';
   return str.replace(/[_*`\[]/g, '');
@@ -72,15 +68,6 @@ function createBot() {
     await handleBattleCommand(bot, msg, args);
   });
 
-  // ── NEW: Cancel Battle Commands ──
-  bot.onText(/\/cancelbattle/, async (msg) => {
-    await cancelBattleCommand(bot, msg);   // Note: we pass bot + msg for consistency
-  });
-
-  bot.onText(/\/admincancelbattle(?:\s+(\d+))?/, async (msg, match) => {
-    await adminCancelBattleCommand(bot, msg);
-  });
-
   // ── /help ──
   bot.onText(/\/help/, async (msg) => {
     await bot.sendMessage(msg.chat.id,
@@ -90,7 +77,6 @@ function createBot() {
       `▸ /collect — Claim free $YC (5m cooldown)\n` +
       `▸ /deposit — Get your personal deposit address\n` +
       `▸ /battle <amount> — Create a battle\n` +
-      `▸ /cancelbattle — Cancel your open battle (after 30 min)\n` +
       `▸ /help — Show this message\n\n` +
       `*Balances:*\n` +
       `▸ 🎰 *Gamble* — Used for battles & collects\n` +
@@ -109,8 +95,7 @@ function createBot() {
     return admins.includes(String(telegramId));
   };
 
-  // (All your existing admin commands like /approve, /reject, /pending, /stats, etc. remain unchanged below)
-  // ── Shared approve/reject logic ──
+  // Shared approve/reject logic (kept as original)
   async function processApproval(chatId, withdrawalId) {
     const withdrawal = await db.getWithdrawalById(withdrawalId);
     if (!withdrawal) return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} not found.`);
@@ -131,7 +116,7 @@ function createBot() {
         );
       } catch { }
     } catch (err) {
-      console.error(`[APPROVE] Withdrawal #${withdrawalId} sendTokens failed:`, err.message, err.stack || '');
+      console.error(`[APPROVE] Withdrawal #${withdrawalId} sendTokens failed:`, err.message);
       try {
         await db.updateWithdrawalStatus(withdrawalId, 'failed', null, err.message);
         await db.refundWithdrawal(withdrawal);
@@ -151,7 +136,7 @@ function createBot() {
   async function processRejection(chatId, withdrawalId) {
     const withdrawal = await db.getWithdrawalById(withdrawalId);
     if (!withdrawal) return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} not found.`);
-    if (withdrawal.status !== 'pending') return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} is already ${withdrawal.status}. Only pending withdrawals can be rejected.`);
+    if (withdrawal.status !== 'pending') return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
     await db.refundWithdrawal(withdrawal);
     await bot.sendMessage(chatId, `✅ Rejected & refunded #${withdrawalId}.`);
     try {
@@ -162,19 +147,17 @@ function createBot() {
     } catch { }
   }
 
-  // /approve_<id>  OR  /approve <id>
+  // Admin commands (kept original)
   bot.onText(/\/approve[_ ](\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     await processApproval(msg.chat.id, parseInt(match[1]));
   });
 
-  // /reject_<id>  OR  /reject <id>
   bot.onText(/\/reject[_ ](\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     await processRejection(msg.chat.id, parseInt(match[1]));
   });
 
-  // /pending — show pending withdrawals
   bot.onText(/\/pending/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
     const pending = await db.getPendingWithdrawals();
@@ -189,14 +172,12 @@ function createBot() {
     await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
 
-  // (All your other admin commands like /reset_mainnet, /credituser, /rescan, /stats, /housefees, etc. stay exactly the same below this point)
-
-  // ── Callback Queries ──
+  // Callback Queries
   bot.on('callback_query', async (query) => {
     await handleCallbackQuery(bot, query);
   });
 
-  // ── Text Messages (multi-step flows) ──
+  // Text Messages
   bot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return;
     await handleTextInput(bot, msg);
@@ -206,17 +187,9 @@ function createBot() {
     if (!err.message?.includes('ETELEGRAM')) console.error('Polling error:', err.message);
   });
 
-  bot.on('error', (err) => {
-    console.error('Bot error:', err.message);
-  });
-
-  // Start deposit poller
+  // Start services
   startDepositPoller(bot);
-
-  // Start duel expiry job
   startDuelExpiryJob(bot);
-
-  // Recover any stuck rumbles
   recoverRumbles(bot);
 
   console.log('✅ YellowCatz Bot is running!');
