@@ -155,4 +155,25 @@ CREATE TABLE IF NOT EXISTS duel_challenges (
   challenger_id TEXT NOT NULL REFERENCES users(telegram_id),
   target_id TEXT NOT NULL REFERENCES users(telegram_id),
   amount DOUBLE PRECISION NOT NULL,
-  status TEXT DEFAULT 'pending' CHECK(status IN
+  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','completed','cancelled','declined','expired')),
+  challenger_message_id BIGINT,
+  target_message_id BIGINT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '5 minutes'
+);
+
+CREATE INDEX IF NOT EXISTS idx_duel_challenger ON duel_challenges(challenger_id);
+CREATE INDEX IF NOT EXISTS idx_duel_target ON duel_challenges(target_id);
+CREATE INDEX IF NOT EXISTS idx_duel_status ON duel_challenges(status);
+
+-- Chat where the main challenge (Accept/Decline) message lives
+DO $$ BEGIN
+  ALTER TABLE duel_challenges ADD COLUMN challenge_chat_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Chat where the Cancel button message lives (DM or same group)
+DO $$ BEGIN
+  ALTER TABLE duel_challenges ADD COLUMN cancel_chat_id TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
