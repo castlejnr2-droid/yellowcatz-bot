@@ -3,7 +3,7 @@ const { formatBalance } = require('./start');
 const { handleDirectChallenge } = require('./duel');
 
 const MIN_WAGER = 10;
-const BATTLE_EXPIRY_MINUTES = 30;
+const BATTLE_EXPIRY_MINUTES = 720;
 
 // Safe HTML escaping
 function escapeHtml(text) {
