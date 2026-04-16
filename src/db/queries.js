@@ -267,7 +267,15 @@ async function cancelBattle(battleId) {
   }
   return true;
 }
-
+async function getOpenBattlesOlderThan(minutes) {
+  const res = await query(
+    `SELECT * FROM battles
+     WHERE status = 'open'
+     AND created_at < NOW() - INTERVAL '1 minute' * $1`,
+    [minutes]
+  );
+  return res.rows;
+}
 async function getUserBattles(telegramId, limit = 10) {
   const res = await query(`
     SELECT b.*,
@@ -670,7 +678,7 @@ module.exports = {
   recordTransfer,
   createWithdrawal, getUserWithdrawals, getPendingWithdrawals, updateWithdrawalStatus,
   getWithdrawalById, refundWithdrawal,
-  createBattle, getOpenBattles, getBattleById, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
+  createBattle, getOpenBattles, getBattleById, getOpenBattlesOlderThan, acceptBattle, cancelBattle,
   creditReferral, getReferralStats, getUserByReferralCode,
   getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats,
   getHouseBalance, withdrawFromHouse,
