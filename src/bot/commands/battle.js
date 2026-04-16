@@ -3,6 +3,7 @@ const { formatBalance } = require('./start');
 const { handleDirectChallenge } = require('./duel');
 
 const MIN_WAGER = 10;
+const BATTLE_EXPIRY_MINUTES = 30;
 
 // Safe HTML escaping
 function escapeHtml(text) {
@@ -25,6 +26,33 @@ async function editOrSend(bot, chatId, msgId, text, opts = {}) {
     }
   }
   return await bot.sendMessage(chatId, text, options);
+}
+
+// ── Background expiry timer — call once at bot startup ──────────────────────
+function startBattleExpiry(bot) {
+  setInterval(async () => {
+    try {
+      const expired = await db.getOpenBattlesOlderThan(BATTLE_EXPIRY_MINUTES);
+      for (const battle of expired) {
+        const success = await db.cancelBattle(battle.id);
+        if (!success) continue;
+
+        console.log(`[BATTLE EXPIRY] Auto-cancelled battle #${battle.id} (${BATTLE_EXPIRY_MINUTES}min timeout)`);
+
+        // DM the challenger
+        try {
+          await bot.sendMessage(battle.challenger_id,
+            `⏰ <b>Battle #${battle.id} expired</b>\n\nNobody accepted your PvP challenge of <b>${formatBalance(battle.wager_amount)}</b> $YC within ${BATTLE_EXPIRY_MINUTES} minutes.\n\nYour wager has been refunded to your Gamble balance.`,
+            { parse_mode: 'HTML' }
+          );
+        } catch {}
+      }
+    } catch (err) {
+      console.error('[BATTLE EXPIRY] Error:', err.message);
+    }
+  }, 60 * 1000); // check every minute
+
+  console.log(`[BATTLE EXPIRY] Auto-expiry running (${BATTLE_EXPIRY_MINUTES}min timeout)`);
 }
 
 async function handleBattleCommand(bot, msg, args) {
@@ -67,12 +95,13 @@ async function handleBattleCommand(bot, msg, args) {
   const displayName = username ? `@${username}` : firstName || 'Someone';
 
   await bot.sendMessage(chatId,
-    `⚔️ ${escapeHtml(displayName)} has challenged someone to PvP for ${formatBalance(amount)} $YC!\nClick the button below to accept.`,
+    `⚔️ ${escapeHtml(displayName)} has challenged someone to PvP for ${formatBalance(amount)} $YC!\nClick the button below to accept.\n\n<i>⏰ Auto-cancels in ${BATTLE_EXPIRY_MINUTES} minutes if nobody accepts.</i>`,
     {
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '⚔️ Accept Challenge', callback_data: `battle_accept_${battleId}` }]
+          [{ text: '⚔️ Accept Challenge', callback_data: `battle_accept_${battleId}` }],
+          [{ text: '❌ Cancel (Host Only)', callback_data: `battle_cancel_${battleId}` }]
         ]
       }
     }
@@ -143,7 +172,7 @@ async function handleBattleAccept(bot, chatId, telegramId, username, firstName, 
   const loserName = result.winner_id === String(telegramId) ? challengerName : opponentName;
   const { pot, fee, payout } = result;
 
-  const resultText = 
+  const resultText =
     `⚔️ <b>Battle Result</b>\n\n` +
     `🏆 Winner: <b>${escapeHtml(winnerName)}</b>\n` +
     `⚔️ Fell in battle: <b>${escapeHtml(loserName)}</b>\n` +
@@ -199,10 +228,14 @@ async function handleBattleHistory(bot, chatId, telegramId, msgId) {
   });
 }
 
+// User cancels their own battle
 async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
   const battle = await db.getBattleById(battleId);
   if (!battle || String(battle.challenger_id) !== String(telegramId)) {
     return await editOrSend(bot, chatId, msgId, `❌ You can only cancel your own battles.`);
+  }
+  if (battle.status !== 'open') {
+    return await editOrSend(bot, chatId, msgId, `❌ This battle is no longer open.`);
   }
   const success = await db.cancelBattle(battleId);
   if (success) {
@@ -215,4 +248,57 @@ async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
   }
 }
 
-module.exports = { handleBattleCommand, showBattleMenu, handleBattleAccept, handleBattleHistory, handleCancelBattle };
+// Admin force-cancels any open battle via /cancelpvp <id>
+async function handleAdminCancelBattle(bot, msg, args) {
+  const { id: telegramId } = msg.from;
+  const chatId = msg.chat.id;
+
+  const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim());
+  if (!admins.includes(String(telegramId))) {
+    return bot.sendMessage(chatId, `⛔ Admin only.`);
+  }
+
+  const battleId = parseInt(args && args[0]);
+  if (isNaN(battleId)) {
+    return bot.sendMessage(chatId, `Usage: /cancelpvp &lt;battle_id&gt;`, { parse_mode: 'HTML' });
+  }
+
+  const battle = await db.getBattleById(battleId);
+  if (!battle) {
+    return bot.sendMessage(chatId, `❌ Battle #${battleId} not found.`, { parse_mode: 'HTML' });
+  }
+  if (battle.status !== 'open') {
+    return bot.sendMessage(chatId,
+      `❌ Battle #${battleId} is already <b>${battle.status}</b> — nothing to cancel.`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  const success = await db.cancelBattle(battleId);
+  if (!success) {
+    return bot.sendMessage(chatId, `❌ Could not cancel battle #${battleId}.`, { parse_mode: 'HTML' });
+  }
+
+  await bot.sendMessage(chatId,
+    `✅ <b>Admin cancelled battle #${battleId}</b>\n\n💰 <b>${formatBalance(battle.wager_amount)}</b> $YC refunded to challenger.`,
+    { parse_mode: 'HTML' }
+  );
+
+  // Notify the challenger
+  try {
+    await bot.sendMessage(battle.challenger_id,
+      `⚠️ <b>Your PvP battle #${battleId} was cancelled by an admin.</b>\n\nYour wager of <b>${formatBalance(battle.wager_amount)}</b> $YC has been refunded.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch {}
+}
+
+module.exports = {
+  handleBattleCommand,
+  showBattleMenu,
+  handleBattleAccept,
+  handleBattleHistory,
+  handleCancelBattle,
+  handleAdminCancelBattle,
+  startBattleExpiry
+};
