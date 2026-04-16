@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { handleStart } = require('./commands/start');
 const { handleCollect } = require('./commands/collect');
-const { handleBattleCommand } = require('./commands/battle');
+const { handleBattleCommand, handleAdminCancelBattle, startBattleExpiry } = require('./commands/battle');
 const { handleRumbleCommand, handleJoinRumble, recoverRumbles } = require('./commands/rumble');
 const { startDuelExpiryJob } = require('./commands/duel');
 const { handleCallbackQuery } = require('./handlers/callbacks');
@@ -95,7 +95,7 @@ function createBot() {
     return admins.includes(String(telegramId));
   };
 
-  // Shared approve/reject logic (kept as original)
+  // Shared approve/reject logic
   async function processApproval(chatId, withdrawalId) {
     const withdrawal = await db.getWithdrawalById(withdrawalId);
     if (!withdrawal) return await bot.sendMessage(chatId, `❌ Withdrawal #${withdrawalId} not found.`);
@@ -147,7 +147,6 @@ function createBot() {
     } catch { }
   }
 
-  // Admin commands (kept original)
   bot.onText(/\/approve[_ ](\d+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     await processApproval(msg.chat.id, parseInt(match[1]));
@@ -172,6 +171,13 @@ function createBot() {
     await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
   });
 
+  // ── /cancelpvp <id> — Admin force-cancel any open PvP battle ──
+  bot.onText(/\/cancelpvp(?:\s+(\d+))?/, async (msg, match) => {
+    if (!isAdmin(msg.from.id)) return;
+    const args = match[1] ? [match[1]] : [];
+    await handleAdminCancelBattle(bot, msg, args);
+  });
+
   // Callback Queries
   bot.on('callback_query', async (query) => {
     await handleCallbackQuery(bot, query);
@@ -191,6 +197,7 @@ function createBot() {
   startDepositPoller(bot);
   startDuelExpiryJob(bot);
   recoverRumbles(bot);
+  startBattleExpiry(bot);
 
   console.log('✅ YellowCatz Bot is running!');
   return bot;
