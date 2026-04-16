@@ -678,7 +678,7 @@ module.exports = {
   recordTransfer,
   createWithdrawal, getUserWithdrawals, getPendingWithdrawals, updateWithdrawalStatus,
   getWithdrawalById, refundWithdrawal,
-  createBattle, getOpenBattles, getBattleById, getOpenBattlesOlderThan, acceptBattle, cancelBattle,
+  createBattle, getOpenBattles, getBattleById, getOpenBattlesOlderThan, acceptBattle, cancelBattle, getUserBattles, getBattleStats,
   creditReferral, getReferralStats, getUserByReferralCode,
   getTopCollectors, getTopBattlers, getTopReferrers, getTotalClaimedLeaderboard, getDepositLeaderboard, getWithdrawalBreakdown, getStats,
   getHouseBalance, withdrawFromHouse,
