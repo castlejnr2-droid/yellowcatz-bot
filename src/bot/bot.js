@@ -177,7 +177,42 @@ function createBot() {
     const args = match[1] ? [match[1]] : [];
     await handleAdminCancelBattle(bot, msg, args);
   });
+// ── /credituser <telegramId> <amount> — Admin manually credit a user ──
+bot.onText(/\/credituser(?:\s+(\d+))?(?:\s+(\d+))?/, async (msg, match) => {
+  if (!isAdmin(msg.from.id)) return;
+  const chatId = msg.chat.id;
+  const targetId = match[1];
+  const amount = parseFloat(match[2]);
 
+  if (!targetId || isNaN(amount) || amount <= 0) {
+    return bot.sendMessage(chatId,
+      `Usage: /credituser &lt;telegramId&gt; &lt;amount&gt;`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  const user = await db.getUser(targetId);
+  if (!user) {
+    return bot.sendMessage(chatId, `❌ User ${targetId} not found.`);
+  }
+
+  await pool.query(
+    'UPDATE users SET gamble_balance = gamble_balance + $1 WHERE telegram_id = $2',
+    [amount, String(targetId)]
+  );
+
+  await bot.sendMessage(chatId,
+    `✅ Credited <b>${formatBalance(amount)}</b> $YC to @${user.username || user.first_name || targetId}'s Gamble balance.`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    await bot.sendMessage(targetId,
+      `🎁 <b>You've been credited ${formatBalance(amount)} $YC</b> to your Gamble balance by an admin!`,
+      { parse_mode: 'HTML' }
+    );
+  } catch {}
+});
   // Callback Queries
   bot.on('callback_query', async (query) => {
     await handleCallbackQuery(bot, query);
