@@ -213,6 +213,55 @@ bot.onText(/\/credituser(?:\s+(\d+))?(?:\s+(\d+))?/, async (msg, match) => {
     );
   } catch {}
 });
+  // ── /totalclaimed — Admin leaderboard of total claimed ──
+bot.onText(/\/totalclaimed/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const rows = await db.getTotalClaimedLeaderboard();
+  const grand = rows.reduce((s, r) => s + parseFloat(r.total_claimed || 0), 0);
+  let text = `🏆 <b>Total Claimed Leaderboard</b>\n\n`;
+  text += `💰 Grand Total: <b>${formatBalance(grand)}</b> $YC\n\n`;
+  rows.slice(0, 20).forEach((r, i) => {
+    const name = r.username ? `@${r.username}` : (r.first_name || r.telegram_id);
+    text += `${i + 1}. ${name} — ${formatBalance(r.total_claimed)}\n`;
+  });
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
+});
+
+// ── /totalwithdrawals — Admin withdrawals breakdown ──
+bot.onText(/\/totalwithdrawals/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const rows = await db.getWithdrawalBreakdown();
+  const totalReq = rows.reduce((s, r) => s + parseFloat(r.total_requested || 0), 0);
+  const totalComp = rows.reduce((s, r) => s + parseFloat(r.total_completed || 0), 0);
+  const totalPend = rows.reduce((s, r) => s + parseFloat(r.total_pending || 0), 0);
+  let text = `💸 <b>Total Withdrawals Breakdown</b>\n\n`;
+  text += `💰 Requested: <b>${formatBalance(totalReq)}</b> $YC\n`;
+  text += `✅ Processed: <b>${formatBalance(totalComp)}</b> $YC\n`;
+  text += `⏳ Pending: <b>${formatBalance(totalPend)}</b> $YC\n\n`;
+  text += `<b>Per User (by total requested):</b>\n`;
+  rows.slice(0, 15).forEach((r, i) => {
+    const name = r.username ? `@${r.username}` : (r.first_name || r.telegram_id);
+    text += `${i + 1}. ${name} — ${formatBalance(r.total_requested)} (${r.num_completed} done, ${r.num_pending} pending)\n`;
+  });
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
+});
+
+// ── /totaldeposited — Admin deposit leaderboard ──
+bot.onText(/\/totaldeposited/, async (msg) => {
+  if (!isAdmin(msg.from.id)) return;
+  const rows = await db.getDepositLeaderboard();
+  const grand = rows.reduce((s, r) => s + parseFloat(r.total_deposited || 0), 0);
+  const depositors = rows.filter(r => parseFloat(r.total_deposited || 0) > 0).length;
+  let text = `💵 <b>Total Deposited Leaderboard</b>\n\n`;
+  text += `💰 Grand Total: <b>${formatBalance(grand)}</b> $YC\n`;
+  text += `👥 Depositors: <b>${depositors}</b>\n\n`;
+  rows.filter(r => parseFloat(r.total_deposited || 0) > 0).slice(0, 15).forEach((r, i) => {
+    const name = r.username ? `@${r.username}` : (r.first_name || r.telegram_id);
+    text += `${i + 1}. ${name} — ${formatBalance(r.total_deposited)} (${r.num_deposits} tx)\n`;
+    if (r.deposit_address) text += `   ATA:\n   <code>${r.deposit_address}</code>\n`;
+  });
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
+});
   // Callback Queries
   bot.on('callback_query', async (query) => {
     await handleCallbackQuery(bot, query);
