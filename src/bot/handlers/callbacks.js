@@ -87,7 +87,7 @@ async function _handleCallback(bot, query) {
   }
   if (data.startsWith('battle_cancel_')) {
     const battleId = parseInt(data.replace('battle_cancel_', ''));
-    return await handleCancelBattle(bot, chatId, telegramId, battleId, msgId);
+    return await handleCancelBattle(bot, chatId, telegramId, battleId, msgId, query);
   }
 
   // ── Admin Approve/Reject Withdrawals ──
