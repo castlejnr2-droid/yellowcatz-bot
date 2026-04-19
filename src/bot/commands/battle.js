@@ -268,10 +268,16 @@ async function handleBattleHistory(bot, chatId, telegramId, msgId) {
 }
 
 // User cancels their own battle
-async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId) {
+async function handleCancelBattle(bot, chatId, telegramId, battleId, msgId, query = null) {
   const battle = await db.getBattleById(battleId);
   if (!battle || String(battle.challenger_id) !== String(telegramId)) {
-    return await editOrSend(bot, chatId, msgId, `❌ You can only cancel your own battles.`);
+    if (query) {
+      return await bot.answerCallbackQuery(query.id, {
+        text: '❌ You can only cancel your own battles.',
+        show_alert: true
+      });
+    }
+    return await bot.sendMessage(chatId, `❌ You can only cancel your own battles.`, { parse_mode: 'HTML' });
   }
   if (battle.status !== 'open') {
     return await editOrSend(bot, chatId, msgId, `❌ This battle is no longer open.`);
