@@ -170,13 +170,32 @@ async function confirmWithdrawal(bot, chatId, telegramId, msgId) {
     `✅ *Withdrawal Submitted!*\n\nID: \`#${withdrawalId}\`\nAmount: \`${formatBalance(state.amount)}\` $YC\nFee (5%): \`${formatBalance(state.fee)}\` $YC\nYou receive: \`${formatBalance(state.netAmount)}\` $YC\nStatus: ⏳ *Pending*`,
     { reply_markup: { inline_keyboard: [[{ text: '📒 View History', callback_data: 'funds_history' }, { text: '🏠 Home', callback_data: 'back_main' }]] } });
 
-  const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').filter(Boolean);
+  // Notify all admins with approve/reject buttons
+  const admins = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').filter(Boolean).map(s => s.trim());
+  const displayName = user.username ? `@${user.username}` : (user.first_name || telegramId);
   for (const adminId of admins) {
     try {
       await bot.sendMessage(adminId,
-        `🆕 *New Withdrawal*\n\nUser: @${user.username || telegramId}\nAmount: \`${formatBalance(state.amount)}\` $YC\nFee: \`${formatBalance(state.fee)}\` $YC\nNet: \`${formatBalance(state.netAmount)}\` $YC\nAddress: \`${state.address}\`\nID: #${withdrawalId}\n\n/approve_${withdrawalId} or /reject_${withdrawalId}`,
-        { parse_mode: 'Markdown' });
-    } catch {}
+        `🆕 <b>New Withdrawal Request</b>\n\n` +
+        `👤 User: ${displayName}\n` +
+        `💰 Amount: <b>${formatBalance(state.amount)}</b> $YC\n` +
+        `🏠 Fee (5%): <b>${formatBalance(state.fee)}</b> $YC\n` +
+        `✅ Net payout: <b>${formatBalance(state.netAmount)}</b> $YC\n` +
+        `📬 Address: <code>${state.address}</code>\n` +
+        `🆔 ID: #${withdrawalId}`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: `✅ Approve #${withdrawalId}`, callback_data: `admin_approve_${withdrawalId}` }],
+              [{ text: `❌ Reject #${withdrawalId}`, callback_data: `admin_reject_${withdrawalId}` }]
+            ]
+          }
+        }
+      );
+    } catch (err) {
+      console.error(`[WITHDRAWAL NOTIFY] Failed to notify admin ${adminId}:`, err.message);
+    }
   }
 }
 
